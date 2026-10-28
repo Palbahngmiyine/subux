@@ -170,7 +170,7 @@ W3C Design Tokens Community Group(DTCG) 형식이다. 토큰은 `$value`·`$type
 | 상태 fg on `bg` (다크 4종) | 7.1~9.2:1 | AAA |
 | 상태 fg on 같은 상태 soft (라이트·다크 8종) | 4.5~6.9:1 | AA 이상 |
 | `primary` on `bg` (라이트, 글자로 쓸 때) | 1.2:1 | **불가** (규칙 3) |
-| 코드 주석 `#6a737d` on 코드 배경 (라이트) | 4.2:1 | 필요하면 `#57606a`(5.6:1)로 교체 |
+| 코드 주석 `#57606a` on 코드 배경 (라이트) | 5.6:1 | AA |
 
 ## 5. 코드 하이라이트 (`color.code.*`)
 
@@ -179,7 +179,7 @@ W3C Design Tokens Community Group(DTCG) 형식이다. 토큰은 `$value`·`$type
 | 토큰 | 역할 | 라이트 | 다크 |
 | --- | --- | --- | --- |
 | `text` | 기본 글자 | `#24292f` | `#c9d1d9` |
-| `comment` | 주석 | `#6a737d` | `#8b949e` |
+| `comment` | 주석 | `#57606a` | `#8b949e` |
 | `keyword` | 키워드 | `#cf222e` | `#ff7b72` |
 | `number` | 숫자·변수·속성 | `#0550ae` | `#79c0ff` |
 | `string` | 문자열·정규식 | `#0a7f5a` | `#a5d6ff` |
@@ -193,7 +193,7 @@ W3C Design Tokens Community Group(DTCG) 형식이다. 토큰은 `$value`·`$type
 
 ## 6. 콜아웃 분류색 (`color.callout.*`, 문서 전용)
 
-Obsidian식 콜아웃 16종을 3px 왼쪽 테두리와 굵은 제목에만 다음 색으로 구분한다(Tailwind 기본 500 단계). 두 모드 공통이다. 본문 글자나 넓은 면에는 쓰지 않는다. `#eab308`·`#22c55e`처럼 라이트 배경에서 AA에 못 미치는 값이 있으므로 제목은 반드시 굵게, 종류 이름을 글자로 함께 쓴다.
+Obsidian식 콜아웃 16종을 3px 왼쪽 테두리에 다음 색으로 구분한다(Tailwind 기본 500 단계). 두 모드 공통이다. 본문 글자나 넓은 면에는 쓰지 않는다. `#eab308`·`#22c55e`처럼 라이트 배경에서 AA에 못 미치는 값이 있으므로 제목은 `color.text`로 굵게 표시하고, 종류 이름을 글자로 함께 쓴다. 분류색은 왼쪽 테두리에만 쓴다.
 
 | 종류 | 색 | 종류 | 색 |
 | --- | --- | --- | --- |
@@ -212,7 +212,7 @@ Obsidian식 콜아웃 16종을 3px 왼쪽 테두리와 굵은 제목에만 다�
 
 | 토큰 | 값 | 설명 |
 | --- | --- | --- |
-| `font.sans` | `"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif` | 기본 본문 산세리프 글꼴 |
+| `font.sans` | `"Pretendard Variable", Pretendard, "Subux Gothic Fallback", -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif` | 기본 본문 산세리프 글꼴 |
 | `font.mono` | `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace` | 코드·키캡 고정폭 글꼴 |
 | `radius.sm/md/lg/xl` | 8px, 12px, 16px, 20px. 알약 링크·인라인 코드는 sm, 버튼·카드·코드 블록은 md | 모서리 반경 |
 | `shadow.sm/md/lg` | 라이트 `0 1px 2px #0000000a`, `0 4px 12px #00000014`, `0 8px 24px #0000001f`. 다크는 같은 형태에 `#00000066`, `#00000080`, `#00000099` (검정 40%·50%·60%) | 그림자 단계 |

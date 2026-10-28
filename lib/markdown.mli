@@ -8,4 +8,6 @@ type rendered_markdown = {
   has_mermaid : bool;
 }
 
-val render : string -> rendered_markdown
+(** [heading_base] is the minimum heading level (default 1). Site templates
+    use 2 beneath their own page title. Forward level jumps are normalized. *)
+val render : ?heading_base:int -> string -> rendered_markdown

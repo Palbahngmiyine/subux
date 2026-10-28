@@ -267,7 +267,7 @@ let test_safe_urls () =
   List.iter
     (fun url ->
       let html = render_html ("[link](" ^ url ^ ")\n\n![image](" ^ url ^ ")") in
-      assert_eq_str html "<p><a>link</a></p>\n<p><img alt=\"image\"></p>"
+      assert_eq_str html "<p><a>link</a></p>\n<p><img loading=\"lazy\" decoding=\"async\" alt=\"image\"></p>"
         ("3.1 unsafe url disarmed: " ^ url))
     [
       "javascript:alert%281%29";
@@ -493,9 +493,131 @@ let test_color_tokens_and_site_builder () =
   print_endline
     "PASS: Design tokens & Site_builder (Blog_mode + Docs_mode) tests"
 
+let test_lighthouse_tasks () =
+  let tokens_json = In_channel.with_open_text "../design/tokens.json" In_channel.input_all in
+  let css = match Token_compiler.compile_full_stylesheet tokens_json with
+    | Ok css -> css | Error e -> fail (error_to_string e) in
+  let minified = Token_compiler.inline_stylesheet css in
+  Printf.printf "CSS: %d -> %d bytes (%.1f%% reduction)\n" (String.length css)
+    (String.length minified) (100. *. (1. -. float_of_int (String.length minified) /. float_of_int (String.length css)));
+  assert_eq_str (Token_compiler.minify_css minified) minified "102 idempotent minification";
+  assert_eq_str (Token_compiler.minify_css {|/* comment */ .a :hover, .b { font-family: "Pretendard Variable"; width: calc(100% - 2px); content: "/* literal */ \""; }|})
+    {|.a :hover,.b{font-family:"Pretendard Variable";width:calc(100% - 2px);content:"/* literal */ \"";}|}
+    "102 preserve descendant selector, math, quoted spaces and escapes";
+  assert_eq_str (Token_compiler.minify_css {|a { background: url(https://example.com/a/*/image.svg); content: "/* keep */"; }|})
+    {|a{background:url(https://example.com/a/*/image.svg);content:"/* keep */";}|}
+    "102 preserve comment-looking URL and string bytes";
+  assert_contains (Markdown.render ~heading_base:2 "# main-content").html
+    "id=\"main-content-1\"" "402 reserve template IDs";
+  let critical = Token_compiler.critical_stylesheet
+    ~html:"<main class=\"article-content\"><p><a href=\"/\">link</a></p><div id=\"jt-search-modal\"><ul class=\"jt-sidebar-list\"></ul></div></main>" css in
+  assert_not_contains critical ".jt-navbar{" "102 remove unrelated page rules";
+  assert_contains critical ".jt-sidebar-link{" "102 retain dynamically inserted search links";
+  assert_contains critical "light-dark(" "102 fold repeated theme colors";
+  assert_true (String.length critical * 100 < String.length css * 50) "102 critical CSS >50% reduction";
+  let footnote = Markdown.render ~heading_base:2 "Text[^1]\n\n[^1]: # Footnote heading" in
+  assert_not_contains footnote.html "<h1" "402 footnote headings normalized";
+  assert_contains footnote.html "id=\"footnote-label\"" "402 footnote description target";
+  assert_not_contains css "@import" "101 no render-blocking imports";
+  assert_contains css "--sx-color-code-comment: #57606a" "401 accessible code comment token";
+  assert_not_contains css ".callout-title { color: var(--sx-color-callout-" "401 no low contrast title";
+  List.iter (fun cls -> assert_contains css ("." ^ cls) ("302 styled class " ^ cls))
+    ["jt-navbar"; "jt-navbar-inner"; "jt-brand"; "jt-nav-links"; "jt-nav-link";
+     "jt-search-btn"; "jt-theme-toggle"; "jt-search-modal"; "jt-search-dialog";
+     "jt-search-input"; "jt-sidebar-list"; "jt-sidebar"; "jt-sidebar-group";
+     "jt-sidebar-title"; "jt-sidebar-link"; "jt-outline"; "jt-outline-title";
+     "jt-doc-layout"; "jt-doc-main"; "jt-doc-footer"; "jt-pager-link";
+     "jt-pager-label"; "jt-pager-title"; "jt-hero"; "jt-hero-name"; "jt-hero-text";
+     "jt-hero-tagline"; "jt-hero-actions"; "jt-btn"; "jt-btn-brand"; "jt-btn-alt";
+     "jt-features"; "jt-feature-card"];
+  List.iter (fun rule -> assert_contains css rule ("303 metric fallback " ^ rule))
+    ["@font-face"; "Subux Gothic Fallback"; "size-adjust:"; "ascent-override:";
+     "descent-override:"; "local(\"Apple SD Gothic Neo\")"; "local(\"Malgun Gothic\")"];
+  assert_eq_str (Site_builder.content_hash "") "84222325" "103 FNV-1a empty vector";
+  assert_eq_str (Site_builder.content_hash "hello") "80aabd0b" "103 FNV-1a hello vector";
+  let md = Markdown.render ~heading_base:2 "# Title\n\n#### Jump\n\n## Reset\n\n> ##### Quote\n\n- ###### List\n\n![image](/image.png \"800x450\")\n\n> [!warning]- Warning\n> hidden body" in
+  assert_not_contains md.html "<h1" "402 body h1 demoted";
+  assert_contains md.html "<h2 id=\"title\">" "402 first heading h2";
+  assert_contains md.html "<h3 id=\"jump\">" "402 forward jump normalized";
+  assert_contains md.html "<h3 id=\"quote\">" "402 nested quote normalized";
+  assert_contains md.html "<h4 id=\"list\">" "402 nested list normalized";
+  assert_contains md.html "loading=\"lazy\" decoding=\"async\" width=\"800\" height=\"450\"" "301 image dimensions";
+  assert_contains md.html "<details class=\"callout-warning\"" "203 native folding";
+  assert_contains md.html "<summary class=\"callout-title\"" "203 keyboard operable summary";
+  assert_not_contains md.html " open" "203 minus is initially closed";
+  assert_contains (Markdown.render "> [!tip]+ Tip\n> body").html " open>" "203 plus is initially open";
+  assert_not_contains (Markdown.render "![bad](/image.png \"800x-1\")").html " width=" "301 invalid dimensions omitted";
+  let source : Site_builder.source_file = {collection="articles"; rel_path="articles/hello.md";
+    raw_markdown="---\ntitle: Safe title\ndate: 2026-10-28\n---\n# Body\n\nText\n\n```mermaid\ngraph LR; A-->B\n```"} in
+  let compile config sources = match Site_builder.compile_site ~config ~tokens_json sources with
+    | Ok p -> p | Error e -> fail (error_to_string e) in
+  let find (plan : Site_builder.build_plan) path =
+    (List.find (fun (a : Site_builder.output_artifact) -> a.out_path = path) plan.artifacts).content in
+  List.iter (fun mode ->
+    let config = {(if mode = Docs_mode then default_docs_config else default_blog_config) with mode} in
+    let plan = compile config [source] in
+    List.iter (fun (a : Site_builder.output_artifact) ->
+      if String.ends_with ~suffix:".html" a.out_path then begin
+        let rec count_h1 i count =
+          if i + 3 >= String.length a.content then count
+          else count_h1 (i + 1) (if String.sub a.content i 3 = "<h1" then count + 1 else count) in
+        assert_true (count_h1 0 0 = 1) "402 exactly one h1 per template";
+        assert_contains a.content "data-sx-inline=\"true\"" "102 inline compiled styles on every page";
+        assert_contains a.content "rel=\"preconnect\"" "101 font preconnect";
+        assert_contains a.content "media=\"print\"" "101 non-blocking font stylesheet";
+        assert_contains a.content "<noscript>" "101 no-JS font fallback";
+        assert_contains a.content "<body><a href=\"#main-content\" class=\"skip-link\">" "402 first child skip link";
+        assert_contains a.content "id=\"main-content\"" "402 skip target";
+        assert_contains a.content "prefers-color-scheme: light" "403 light theme-color";
+        assert_contains a.content "prefers-color-scheme: dark" "403 dark theme-color";
+        assert_contains a.content "property=\"og:title\"" "403 OpenGraph";
+        assert_contains a.content "name=\"twitter:card\"" "403 Twitter card";
+        assert_not_contains a.content "href=\"/assets/subux-theme.css\"" "102 no blocking theme request"
+      end) plan.artifacts;
+    assert_contains (find plan "_headers") "immutable" "103 immutable fingerprint cache";
+    assert_contains (find plan "_headers") "nosniff" "103 security headers";
+    assert_contains (find plan "robots.txt") "/sitemap.xml" "403 robots sitemap";
+    let external_plan = compile {config with inline_css=false} [source] in
+    let href = "/assets/subux-theme." ^ Site_builder.content_hash (Token_compiler.minify_css css) ^ ".css" in
+    assert_contains (find external_plan "index.html") ("href=\"" ^ href ^ "\"") "103 fingerprint reference";
+    assert_eq_str (find external_plan (String.sub href 1 (String.length href - 1))) (Token_compiler.minify_css css) "103 hashed CSS artifact"
+  ) [Blog_mode; Docs_mode; Unified_mode];
+  let plan = compile default_blog_config [source] in
+  let article = find plan "hello/index.html" in
+  assert_contains article "application/ld+json" "403 structured article";
+  assert_contains article "\"datePublished\":\"2026-10-28\"" "403 article date";
+  assert_contains article "IntersectionObserver" "201 viewport-lazy Mermaid";
+  assert_contains article "rootMargin:'200px'" "201 viewport proximity";
+  assert_contains article "observer.disconnect()" "201 disconnect before import";
+  let unified_source = {source with collection="contents"; rel_path="contents/guide.md"} in
+  let unified_plan = compile {default_blog_config with mode=Unified_mode} [source; unified_source] in
+  assert_contains (find unified_plan "contents/guide/index.html") "jt-doc-main" "302 unified doc routes preserve contents prefix";
+  assert_contains (find unified_plan "tech/index.html") "data-tab-panel=\"tech\"" "202 unified static tabs";
+  assert_not_contains (find (compile {default_blog_config with enable_search=false} [source]) "index.html") "id=\"jt-search-open\"" "204 search can be disabled";
+  assert_contains (find plan "index.html") "fontDisplay='optional'" "303 prevent late font swap";
+  assert_contains (find plan "index.html") "history.pushState" "202 synchronous URL-preserving tabs";
+  assert_contains (find plan "tech/index.html") "data-tab-panel=\"tech\"" "202 no-JS static tab";
+  let hostile = {source with raw_markdown="---\ntitle: '</script><script>alert(1)</script>'\n---\nBody"} in
+  let hostile_html = find (compile default_blog_config [hostile]) "hello/index.html" in
+  assert_not_contains hostile_html "</script><script>alert(1)" "403 JSON-LD raw-text injection blocked";
+  assert_contains hostile_html "\\u003c/script>" "403 JSON-LD less-than escaped";
+  let long_sources = List.init 120 (fun i -> {source with
+    rel_path=Printf.sprintf "articles/post-%d.md" i;
+    raw_markdown="---\ntitle: 검색 제목\n---\n## 한글 검색\n\n" ^ String.concat "\n\t " (List.init 1000 (fun _ -> {|한글 😊 \"|}))}) in
+  let large = find (compile default_blog_config long_sources) "search-index.json" in
+  assert_true (String.length large < 20000) "204 120-entry UTF-8 search index <20KB";
+  assert_true (String.is_valid_utf_8 large) "204 UTF-8 prefixes remain valid";
+  begin match Json_parser.parse large with
+  | Ok (Json_parser.Array items) -> assert_true (List.length items = 120) "204 all entries retained"
+  | Ok _ | Error _ -> fail "204 valid compact JSON"
+  end;
+  assert_true (String.length minified * 100 <= String.length css * 70) "102 >=30% inline CSS reduction";
+  print_endline "PASS: Lighthouse task regressions"
+
 let () =
   test_frontmatter ();
   test_markdown_rendering ();
   test_safe_urls ();
   test_color_tokens_and_site_builder ();
+  test_lighthouse_tasks ();
   print_endline "\nALL TESTS PASSED!"

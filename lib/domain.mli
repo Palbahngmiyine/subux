@@ -199,6 +199,7 @@ type site_config = {
   sidebar : sidebar_group list;
   auto_sidebar : bool;
   enable_search : bool;
+  inline_css : bool; (** Inline the compiled theme in each page; defaults to true. *)
 }
 
 val default_blog_config : site_config
