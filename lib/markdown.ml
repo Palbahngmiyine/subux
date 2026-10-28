@@ -1209,9 +1209,12 @@ let normalize_headings base doc =
     | other -> other) (Doc.defs doc) in
   Doc.make ~nl:(Doc.nl doc) ~defs body
 
-let render ?(heading_base = 1) (md : string) : rendered_markdown =
+let render ?heading_base (md : string) : rendered_markdown =
   let parsed = Doc.of_string ~heading_auto_ids:true ~strict:false md in
-  let transformed = normalize_headings heading_base (transform_doc md parsed) in
+  let transformed = transform_doc md parsed in
+  let transformed = match heading_base with
+    | None -> transformed
+    | Some base -> normalize_headings base transformed in
   let captured_state : render_state option ref = ref None in
   let init_context c d =
     init_render_state c d;

@@ -509,6 +509,11 @@ let test_lighthouse_tasks () =
     "102 preserve comment-looking URL and string bytes";
   assert_contains (Markdown.render ~heading_base:2 "# main-content").html
     "id=\"main-content-1\"" "402 reserve template IDs";
+  let standalone = Markdown.render "## Section\n\n#### Subsection\n\n### Included in TOC" in
+  assert_contains standalone.html "<h2 id=\"section\">" "402 standalone headings retain source levels";
+  assert_contains standalone.html "<h4 id=\"subsection\">" "402 standalone render preserves CommonMark hierarchy";
+  assert_true (List.map (fun (t : toc_item) -> t.level) standalone.toc = [2; 3])
+    "402 standalone TOC retains the existing h2/h3 contract";
   let critical = Token_compiler.critical_stylesheet
     ~html:"<main class=\"article-content\"><p><a href=\"/\">link</a></p><div id=\"jt-search-modal\"><ul class=\"jt-sidebar-list\"></ul></div></main>" css in
   assert_not_contains critical ".jt-navbar{" "102 remove unrelated page rules";
@@ -589,6 +594,8 @@ let test_lighthouse_tasks () =
   assert_contains article "IntersectionObserver" "201 viewport-lazy Mermaid";
   assert_contains article "rootMargin:'200px'" "201 viewport proximity";
   assert_contains article "observer.disconnect()" "201 disconnect before import";
+  assert_contains article "getComputedStyle(probe).color" "201 resolve light-dark colors before Mermaid";
+  assert_contains article "primaryColor:color('active-fill')" "201 Mermaid follows primary or accent theme";
   let unified_source = {source with collection="contents"; rel_path="contents/guide.md"} in
   let unified_plan = compile {default_blog_config with mode=Unified_mode} [source; unified_source] in
   assert_contains (find unified_plan "contents/guide/index.html") "jt-doc-main" "302 unified doc routes preserve contents prefix";

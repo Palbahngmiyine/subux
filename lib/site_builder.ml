@@ -262,8 +262,10 @@ let mermaid_runtime_script : Html.node =
 let loading=false,observer;
 const load=()=>{if(loading)return;loading=true;if(observer)observer.disconnect();
  const run=()=>import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(async({default:mermaid})=>{
-  const css=getComputedStyle(document.documentElement),color=n=>css.getPropertyValue('--sx-color-'+n).trim();
-  mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',themeVariables:{background:color('bg'),primaryColor:color('primary'),primaryTextColor:color('on-primary'),lineColor:color('text')}});
+  const probe=document.createElement('span');document.body.append(probe);
+  const color=n=>{probe.style.color='var(--sx-'+n+')';return getComputedStyle(probe).color;};
+  const themeVariables={background:color('color-bg'),primaryColor:color('active-fill'),primaryTextColor:color('on-active-fill'),lineColor:color('color-text')};probe.remove();
+  mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',themeVariables});
   for(const block of blocks){const pre=block.parentElement;if(!pre)continue;
    const diagram=document.createElement('div');diagram.className='mermaid';diagram.textContent=block.textContent;
    pre.replaceWith(diagram);try{await mermaid.run({nodes:[diagram]});}catch{diagram.replaceWith(pre);}}

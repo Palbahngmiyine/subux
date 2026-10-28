@@ -14,14 +14,14 @@
 
 | 페이지 | Performance | Accessibility | Best Practices | SEO | FCP/LCP (ms) | TBT (ms) | CLS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Blog 홈 | 100 | 100 | 100 | 100 | 639 | 0 | 0.000 |
-| Blog 본문 | 100 | 100 | 100 | 100 | 650 | 0 | 0.000 |
-| Blog 정적 탭 | 100 | 100 | 100 | 100 | 640 | 0 | 0.000 |
-| Docs 홈 | 100 | 100 | 100 | 100 | 644 | 0 | 0.000 |
-| Docs 본문 | 100 | 100 | 100 | 100 | 1389 | 0 | 0.000 |
-| Unified 홈 | 100 | 100 | 100 | 100 | 638 | 0 | 0.000 |
-| Unified 문서 | 100 | 100 | 100 | 100 | 658 | 0 | 0.000 |
-| `404.html` 파일 | 100 | 100 | 100 | 100 | 629 | 0 | 0.000 |
+| Blog 홈 | 100 | 100 | 100 | 100 | 1381 | 0 | 0.000 |
+| Blog 본문 | 100 | 100 | 100 | 100 | 1396 | 0 | 0.000 |
+| Blog 정적 탭 | 100 | 100 | 100 | 100 | 638 | 0 | 0.000 |
+| Docs 홈 | 100 | 100 | 100 | 100 | 1393 | 0 | 0.000 |
+| Docs 본문 | 100 | 100 | 100 | 100 | 1380 | 0 | 0.000 |
+| Unified 홈 | 100 | 100 | 100 | 100 | 637 | 0 | 0.000 |
+| Unified 문서 | 100 | 100 | 100 | 100 | 1411 | 0 | 0.000 |
+| `404.html` 파일 | 100 | 100 | 100 | 100 | 628 | 0 | 0.000 |
 
 `404.html`은 정적 파일을 HTTP 200으로 읽는 검사다. 존재하지 않는 URL의 HTTP 상태 코드와 호스팅 제공자의 오류 페이지 라우팅은 검사하지 않았다.
 
@@ -56,7 +56,7 @@ TASK-102의 단순 공백 스캐너만으로는 30% 감소가 불가능했다. �
 | TASK-101 | CSS `@import` 제거. 모든 head에 preconnect, CSS preload, print/onload 로딩과 noscript 폴백 제공. |
 | TASK-102 | 기본 인라인 CSS와 `inlineCss` 설정 추가. 위 표의 단계별 크기 검증 및 CSS 동등성 비교. |
 | TASK-103 | FNV-1a 검사 벡터, 내용 기반 CSS 경로와 `_headers` 검증. 변경 가능한 무해시 CSS 별칭에는 재검증 캐시를 사용하고 immutable은 실제 해시 경로에만 적용. |
-| TASK-201 | IntersectionObserver 200px 임계값 뒤 idle 시점에 Mermaid import. observer 즉시 해제, import 실패 시 원문 보존. 첫 화면 요청 0회, 스크롤 후 1회 확인. |
+| TASK-201 | IntersectionObserver 200px 임계값 뒤 idle 시점에 Mermaid import. observer 즉시 해제, import 실패 시 원문 보존. 첫 화면 요청 0회, 스크롤 후 1회와 실제 SVG 생성 확인. |
 | TASK-202 | 450 bytes 미만 위임 prefetch, 동기 탭 전환과 URL/뒤로 가기 복원. JavaScript 없이 정적 탭 경로 이동 확인. |
 | TASK-203 | 네이티브 details/summary 사용. Enter, Space, 포인터 및 JavaScript 비활성 상태 조작 확인. `toggle` 위임은 호환용 data 속성만 동기화. |
 | TASK-204 | 공백 정규화, UTF-8 경계 보존, heading 우선 검색 요약과 항목별 적응형 바이트 예산. 120개 긴 한글/이모지 문서의 인덱스가 20KB 미만이고 항목 누락이 없는지 회귀 검사. 블로그/문서 공통 검색을 열 때만 인덱스 요청. |
@@ -96,4 +96,20 @@ git diff --check
 
 검증 도구는 저장소 밖 `/private/tmp/subux-audit-tools`에만 설치했다. 합성 입력, 실행한 브라우저/감사 스크립트와 최종 Lighthouse JSON은 Git 제외 경로 `output/lighthouse/`에 보관한다. `output/lighthouse/summary.json`은 최종 8개 측정값, `browser-summary.json`은 기능·axe·CLS 검사 결과다. `responsive-check.txt`에는 24개 페이지/폭 조합 각각의 라이트/다크 CSS 비교가 있다. 원본 JSON의 소수점 값은 위 표에서 반올림했다.
 
-재실행은 `output/lighthouse/fixtures/*-src`를 `dune exec subux -- build`로 생성하고, 보관된 `subux-serve.py`/`subux-serve-gzip.py`로 제공한 뒤 `subux-lighthouse-audit.py`를 실행한다. 스크립트의 도구 경로는 위 임시 설치 위치를 사용한다. 호스팅 배포·push·PR 생성은 수행하지 않았다.
+재실행은 `output/lighthouse/fixtures/*-src`를 `dune exec subux -- build`로 생성하고, 보관된 `subux-serve.py`/`subux-serve-gzip.py`로 제공한 뒤 `subux-lighthouse-audit.py`를 실행한다. 스크립트의 도구 경로는 위 임시 설치 위치를 사용한다. 이 기록은 로컬 검증 근거이며 호스팅 배포는 수행하지 않았다.
+
+
+## PR 전 자체 재리뷰
+
+`origin/main`의 `3d72f11`과 전체 변경을 대조하고, 백로그 항목·공개 API·CSS 규칙 선택·보안 경계·클라이언트 동작을 다시 검토했다. 다음 두 회귀를 수정했다.
+
+- Mermaid 초기화에 `light-dark(#fafafa,#171717)` 사용자 정의 속성 문자열이 전달되어 `Unsupported color format` 오류가 발생했다. CSS 속성을 실제 요소에 적용한 뒤 계산된 RGB 색상으로 읽어 전달한다. primary/accent는 도달성이 보존되는 활성 채움 토큰을 사용한다.
+- 기본 `Markdown.render` 호출이 `##`를 `h1`로 올리는 등 기존 제목 레벨을 바꿨다. 기본 호출은 원문 레벨과 기존 h2/h3 TOC 계약을 보존하고, 사이트 빌더의 명시적 `heading_base:2` 호출에 정규화를 적용한다.
+
+수정 후 `dune build`, `dune runtest`, `dune exec subux -- check`, `git diff --check`가 통과했다. 위 Lighthouse 표는 수정된 HTML 8개의 재측정값으로 갱신했다. 모든 페이지에서 4개 부문 100점, TBT 0ms, CLS 0을 확인했다.
+
+캐시가 없는 새 브라우저 컨텍스트에서 인라인/외부 CSS × primary/accent × 라이트/다크의 8개 조합을 확인했다. 모두 첫 화면 Mermaid 요청 0회, 스크롤 후 1회, SVG 1개 생성, 원래 코드 블록 제거, 페이지 오류 0건이었다. 노드 채움은 primary `rgb(194, 231, 255)`, accent `rgb(255, 218, 194)`로 일치했다. 다운로드 횟수만으로 렌더링 성공을 판정하지 않았다.
+
+수정 후 48개 조건의 CSS 비교에서 차이 0건, 라이트/다크 8개 axe 검사에서 위반 0건을 확인했다. 검색 지연 요청·포커스 복귀, 탭 전환·뒤로 가기, 프리페치 중복 방지, JavaScript 없는 탭·콜아웃 조작도 다시 확인했다.
+
+수정 후의 기능 검사와 CSS 비교는 `output/lighthouse/review-*.txt`에 보관한다. 이 원본 파일과 합성 입력은 Git 제외 상태의 로컬 산출물이며 PR에는 이 검증 기록과 회귀 테스트를 포함한다. 자체 재리뷰 범위에서 미해결 결함은 발견하지 못했다. 운영 환경·다른 브라우저·Windows 실행을 검증했다는 의미는 아니다.

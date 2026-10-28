@@ -8,6 +8,7 @@ type rendered_markdown = {
   has_mermaid : bool;
 }
 
-(** [heading_base] is the minimum heading level (default 1). Site templates
-    use 2 beneath their own page title. Forward level jumps are normalized. *)
+(** Without [heading_base], preserve the source heading levels. Site templates
+    use [heading_base:2] beneath their own page title, which also normalizes
+    forward level jumps. *)
 val render : ?heading_base:int -> string -> rendered_markdown
