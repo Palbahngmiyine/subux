@@ -1,0 +1,5 @@
+(library
+ (name cmarkit)
+ (wrapped false)
+ (modes native)
+ (flags (:standard -w -a -g)))

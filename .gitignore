@@ -1,0 +1,82 @@
+# =============================================================================
+# OCaml / Dune / Opam Build Artifacts
+# =============================================================================
+/_build/
+/_opam/
+.opam/
+*.install
+.merlin
+
+# Compiled OCaml object & interface artifacts (outside _build)
+*.annot
+*.cmo
+*.cmi
+*.cmx
+*.cmxa
+*.cmxs
+*.cmt
+*.cmti
+*.o
+*.a
+*.so
+*.dll
+*.byte
+*.native
+*.exe
+
+# Coverage & profiling
+bisect*.coverage
+/_coverage/
+gmon.out
+ocamlprof.dump
+
+# =============================================================================
+# Subux Static Site Generator Outputs
+# =============================================================================
+/_site/
+/dist/
+/output/
+/site/
+
+# =============================================================================
+# Vendored & Design System Sources (Explicitly Tracked)
+# =============================================================================
+!vendor/
+!design/
+
+# =============================================================================
+# Local LLM Task Lists & Agent Scratch Documents (Untracked by Git)
+# =============================================================================
+/LIGHTHOUSE-TASKS.md
+/TASKS.md
+/*.local.md
+/.llm/
+
+# =============================================================================
+# Environment, Logs & Temporary Files
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+
+# =============================================================================
+# OS & Editor Metadata
+# =============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~

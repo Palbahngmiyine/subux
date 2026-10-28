@@ -1,0 +1,8 @@
+(executable
+ (name main)
+ (public_name subux)
+ (package subux)
+ (modes native)
+ (libraries subux_lib unix)
+ (flags (:standard -w +a-4-40-42-44 -warn-error +a))
+ (ocamlopt_flags (:standard -O3)))
