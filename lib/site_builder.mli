@@ -40,13 +40,17 @@ val build_series_info :
   parsed_entry list ->
   Domain.series_info option
 
+(** Renderers accept the compiled theme for inlining/fingerprinting. Without
+    [stylesheet], standalone calls link the compatible external theme alias. *)
 val render_blog_home :
+  ?stylesheet:string ->
   config:Domain.site_config ->
   active_tab:string ->
   parsed_entry list ->
   string
 
 val render_blog_article :
+  ?stylesheet:string ->
   config:Domain.site_config ->
   series:Domain.series_info option ->
   parsed_entry ->
@@ -55,9 +59,11 @@ val render_blog_article :
 val render_not_found : config:Domain.site_config -> string
 
 val render_docs_home :
+  ?stylesheet:string ->
   config:Domain.site_config -> parsed_entry -> string
 
 val render_docs_page :
+  ?stylesheet:string ->
   config:Domain.site_config ->
   all_docs:parsed_entry list ->
   parsed_entry ->
@@ -68,3 +74,6 @@ val compile_site :
   tokens_json:string ->
   source_file list ->
   (build_plan, Domain.build_error) result
+
+(** Low 32 bits of the 64-bit FNV-1a digest, as eight lowercase hex digits. *)
+val content_hash : string -> string
