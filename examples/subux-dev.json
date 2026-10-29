@@ -1,6 +1,7 @@
 {
   "title": "subux.dev",
   "description": "Just my thoughts",
+  "enableSearch": false,
   "githubUrl": "https://github.com/Palbahngmiyine",
   "customCss": "site.css",
   "customJs": "site.js",

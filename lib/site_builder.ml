@@ -54,8 +54,8 @@ let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
   let* doc =
     Frontmatter.parse ~file:src.rel_path src.raw_markdown
   in
-  let slug = Slug.of_key ~base_folder:src.collection src.rel_path in
-  let rendered = Markdown.render doc.body in
+  let base_folder = if src.collection = "contents" || src.collection = "docs" then "" else src.collection in
+  let slug = Slug.of_key ~base_folder src.rel_path in
   let title =
     match doc.meta.title with
     | Some t when String.trim t <> "" -> String.trim t
@@ -69,6 +69,7 @@ let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
             end
         end
   in
+  let rendered = Markdown.render ~heading_base:2 ~page_title:title doc.body in
   Ok
     {
       collection = src.collection;
@@ -173,7 +174,30 @@ let github_svg_node : Html.node =
   Html.raw
     "<svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\" width=\"24\" height=\"24\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z\"/></svg>"
 
-let common_head ~(page_title : string) ~(description : string)
+let content_hash content =
+  let hash = String.fold_left (fun acc c ->
+    Int64.mul (Int64.logxor acc (Int64.of_int (Char.code c))) 0x100000001b3L)
+      0xcbf29ce484222325L content in
+  Printf.sprintf "%08Lx" (Int64.logand hash 0xffffffffL)
+
+let base_url (config : site_config) =
+  if String.ends_with ~suffix:"/" config.base_url then
+    String.sub config.base_url 0 (String.length config.base_url - 1)
+  else config.base_url
+
+let safe_href href =
+  Option.value ~default:"#" (Safe_url.sanitize_url ~allow_contact:true ~decode_entities:false href)
+
+let css_asset css = "/assets/subux-theme." ^ content_hash (Token_compiler.minify_css css) ^ ".css"
+
+(* HTML raw-text elements must never contain a literal closing tag. *)
+let escape_raw_text escape text =
+  String.concat escape (String.split_on_char '<' text)
+
+let skip_link = Html.el "a" ~attrs:[("href", "#main-content"); ("class", "skip-link")]
+  [Html.txt "본문으로 건너뛰기"]
+
+let common_head ~stylesheet ~(page_title : string) ~(description : string)
     ~(canonical_path : string) ~(config : site_config) : Html.node list =
   let canonical_url =
     let base =
@@ -186,6 +210,7 @@ let common_head ~(page_title : string) ~(description : string)
   [
     Html.void "meta" ~attrs:[ ("charset", "utf-8") ] ();
     Html.el "title" [ Html.txt page_title ];
+    Html.void "link" ~attrs:[("rel", "icon"); ("type", "image/svg+xml"); ("href", "/favicon.svg")] ();
     Html.void "meta"
       ~attrs:
         [
@@ -196,15 +221,32 @@ let common_head ~(page_title : string) ~(description : string)
     Html.void "meta"
       ~attrs:[ ("name", "description"); ("content", description) ]
       ();
-    Html.void "meta"
-      ~attrs:[ ("name", "theme-color"); ("content", "#c2e7ff") ]
-      ();
+    Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: light)"); ("content", "#fafafa")] ();
+    Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: dark)"); ("content", "#171717")] ();
+    Html.void "meta" ~attrs:[("property", "og:title"); ("content", page_title)] ();
+    Html.void "meta" ~attrs:[("property", "og:description"); ("content", description)] ();
+    Html.void "meta" ~attrs:[("property", "og:url"); ("content", safe_href canonical_url)] ();
+    Html.void "meta" ~attrs:[("property", "og:type"); ("content", if canonical_path = "/" then "website" else "article")] ();
+    Html.void "meta" ~attrs:[("property", "og:site_name"); ("content", config.title)] ();
+    Html.void "meta" ~attrs:[("name", "twitter:card"); ("content", "summary")] ();
+    Html.void "meta" ~attrs:[("name", "twitter:title"); ("content", page_title)] ();
+    Html.void "meta" ~attrs:[("name", "twitter:description"); ("content", description)] ();
     Html.void "link"
-      ~attrs:[ ("rel", "canonical"); ("href", canonical_url) ]
+      ~attrs:[ ("rel", "canonical"); ("href", safe_href canonical_url) ]
       ();
-    Html.void "link"
-      ~attrs:[ ("rel", "stylesheet"); ("href", "/assets/subux-theme.css") ]
-      ();
+    (match stylesheet with
+     | Some css when config.inline_css ->
+         Html.el "style" ~attrs:[("data-sx-inline", "true")]
+           [Html.raw (escape_raw_text "\\3c " css)]
+     | css -> Html.void "link" ~attrs:[("rel", "stylesheet");
+         ("href", match css with Some c -> css_asset c | None -> "/assets/subux-theme.css")] ());
+    Html.void "link" ~attrs:[("rel", "preconnect"); ("href", "https://cdn.jsdelivr.net"); ("crossorigin", "anonymous")] ();
+    Html.void "link" ~attrs:[("rel", "preload"); ("as", "style"); ("crossorigin", "anonymous");
+      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ();
+    Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous"); ("media", "print"); ("onload", "try{for(const r of this.sheet.cssRules)if(r.type===5)r.style.fontDisplay='optional'}catch{}this.media='all'");
+      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ();
+    Html.el "noscript" [Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous");
+      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ()];
   ] @ (match config.custom_css with
       | None -> []
       | Some _ -> [ Html.void "link"
@@ -214,343 +256,48 @@ let common_head ~(page_title : string) ~(description : string)
        | Some _ -> [ Html.el "script"
            ~attrs:[ ("type", "module"); ("src", "/assets/custom.js") ] [] ])
 
+let document ?(customized = false) ~lang ~head ~body () =
+  let html = Html.to_string (Html.frag body) in
+  let head = List.map (function
+    | Html.El ("style", attrs, [Html.Raw css]) ->
+        let css = if customized then Token_compiler.minify_css css
+          else Token_compiler.critical_stylesheet ~html css in
+        Html.el "style" ~attrs [Html.raw css]
+    | node -> node) head in
+  Html.to_document ~lang ~head ~body
+
 let mermaid_runtime_script : Html.node =
-  Html.el "script"
-    ~attrs:[ ("type", "module") ]
-    [
-      Html.raw
-        "const blocks = Array.from(document.querySelectorAll('.article-content pre > code.language-mermaid'));\n\
-         if (blocks.length > 0) {\n\
-           import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(async ({ default: mermaid }) => {\n\
-             mermaid.initialize({\n\
-               startOnLoad: false,\n\
-               securityLevel: 'strict',\n\
-               theme: 'base',\n\
-               layout: 'dagre',\n\
-               look: 'classic',\n\
-               themeVariables: {\n\
-                 background: '#ffffff',\n\
-                 primaryColor: '#eff6ff',\n\
-                 primaryBorderColor: '#2563eb',\n\
-                 primaryTextColor: '#0f172a',\n\
-                 secondaryColor: '#ecfdf5',\n\
-                 secondaryBorderColor: '#059669',\n\
-                 tertiaryColor: '#fff7ed',\n\
-                 tertiaryBorderColor: '#f97316',\n\
-                 lineColor: '#2563eb'\n\
-               }\n\
-             });\n\
-             const nodes = [];\n\
-             for (const block of blocks) {\n\
-               const pre = block.parentElement;\n\
-               if (!pre || pre.dataset.mermaidProcessed === 'true') continue;\n\
-               const diagram = document.createElement('div');\n\
-               diagram.className = 'mermaid';\n\
-               diagram.textContent = block.textContent ?? '';\n\
-               pre.dataset.mermaidProcessed = 'true';\n\
-               pre.replaceWith(diagram);\n\
-               nodes.push(diagram);\n\
-             }\n\
-             if (nodes.length > 0) await mermaid.run({ nodes });\n\
-           });\n\
-         }";
-    ]
+  Html.el "script" ~attrs:[("type", "module")] [Html.raw {|const blocks=[...document.querySelectorAll('.article-content pre > code.language-mermaid')];
+let loading=false,observer;
+const load=()=>{if(loading)return;loading=true;if(observer)observer.disconnect();
+ const run=()=>import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(async({default:mermaid})=>{
+  const probe=document.createElement('span');document.body.append(probe);
+  const color=n=>{probe.style.color='var(--sx-'+n+')';return getComputedStyle(probe).color;};
+  const themeVariables={background:color('color-bg'),primaryColor:color('active-fill'),primaryTextColor:color('on-active-fill'),lineColor:color('color-text')};probe.remove();
+  mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',themeVariables});
+  for(const block of blocks){const pre=block.parentElement;if(!pre)continue;
+   const diagram=document.createElement('div');diagram.className='mermaid';diagram.textContent=block.textContent;
+   pre.replaceWith(diagram);try{await mermaid.run({nodes:[diagram]});}catch{diagram.replaceWith(pre);}}
+ }).catch(()=>{});
+ if('requestIdleCallback'in window)requestIdleCallback(run);else setTimeout(run,0);
+};
+if(blocks.length){if('IntersectionObserver'in window){observer=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))load();},{rootMargin:'200px'});blocks.forEach(b=>observer.observe(b));}
+else load();}|}]
 
-let subux_tabs_runtime_script : Html.node =
-  Html.el "script"
-    [
-      Html.raw
-        "(function(){\n\
-           const params = new URLSearchParams(window.location.search);\n\
-           const tab = params.get('tab');\n\
-           if (!tab) return;\n\
-           const panels = document.querySelectorAll('[data-tab-panel]');\n\
-           const links = document.querySelectorAll('a.tab-link[data-tab-id]');\n\
-           let matched = false;\n\
-           panels.forEach(p => { if (p.getAttribute('data-tab-panel') === tab) matched = true; });\n\
-           if (!matched) return;\n\
-           panels.forEach(p => {\n\
-             p.hidden = p.getAttribute('data-tab-panel') !== tab;\n\
-           });\n\
-           links.forEach(l => {\n\
-             if (l.getAttribute('data-tab-id') === tab) {\n\
-               l.setAttribute('aria-current', 'page');\n\
-             } else {\n\
-               l.removeAttribute('aria-current');\n\
-             }\n\
-           });\n\
-         })();";
-    ]
+let prefetch_script = Html.el "script" ~attrs:[("data-sx-prefetch", "true")] [Html.raw
+  {|(()=>{const s=new Set;for(const t of ['pointerenter','touchstart'])document.addEventListener(t,e=>{const a=e.target.closest?.('a[href^="/"]');if(!a||a.origin!==location.origin||a.hasAttribute('download')||s.has(a.href))return;s.add(a.href);const l=document.createElement('link');l.rel='prefetch';l.href=a.href;document.head.append(l)},{capture:true,passive:true})})();|}]
 
-(* 1. Blog_mode Home, Article & 404 Renderers *)
-let render_article_list_node (entries : parsed_entry list) : Html.node =
-  if entries = [] then
-    Html.el "div"
-      ~attrs:[ ("class", "empty-state") ]
-      [ Html.el "p" [ Html.txt "No articles yet. Will be updated soon..." ] ]
-  else
-    let groups = group_entries_by_year entries in
-    Html.el "nav"
-      ~attrs:[ ("class", "articles") ]
-      (List.map
-         (fun (year, year_entries) ->
-           let year_str = Int.to_string year in
-           Html.el "div"
-             [
-               Html.el "h2"
-                 [
-                   Html.el "time"
-                     ~attrs:[ ("datetime", year_str) ]
-                     [ Html.txt (year_str ^ "년") ];
-                 ];
-               Html.el "ul"
-                 (List.map
-                    (fun entry ->
-                      let date_node =
-                        match entry.meta.date with
-                        | None -> Html.empty
-                        | Some d ->
-                            Html.el "time"
-                              ~attrs:[ ("datetime", format_iso d) ]
-                              [ Html.txt (format_korean_short d) ]
-                      in
-                      Html.el "li"
-                        [
-                          date_node;
-                          Html.el "a"
-                            ~attrs:
-                              [
-                                ("href", Slug.to_href entry.slug);
-                                ("class", "article-link");
-                              ]
-                            [ Html.txt entry.title ];
-                        ])
-                    year_entries);
-             ])
-         groups)
+let callout_script = Html.el "script" [Html.raw {|document.addEventListener('toggle',e=>{const d=e.target;if(d.matches?.('details[data-callout]'))d.dataset.expanded=String(d.open)},{capture:true});|}]
 
-let render_blog_home ~(config : site_config) ~(active_tab : string)
-    (all_entries : parsed_entry list) : string =
-  let tabs =
-    if config.tabs = [] then default_blog_config.tabs else config.tabs
-  in
-  let github_node =
-    match config.github_url with
-    | None -> Html.empty
-    | Some gh_url ->
-        Html.el "a"
-          ~attrs:
-            [
-              ("href", gh_url);
-              ("target", "_blank");
-              ("rel", "noopener noreferrer");
-              ("class", "github-link");
-              ("title", "GitHub");
-            ]
-          [
-            Html.el "span" ~attrs:[ ("class", "sr-only") ] [ Html.txt "GitHub" ];
-            github_svg_node;
-          ]
-  in
-  let nav_links =
-    List.map
-      (fun (t : collection_tab) ->
-        let is_active = t.id = active_tab in
-        let base_attrs =
-          [
-            ("href", "/?tab=" ^ t.id);
-            ("class", "tab-link");
-            ("data-tab-id", t.id);
-          ]
-        in
-        let attrs =
-          if is_active then base_attrs @ [ ("aria-current", "page") ]
-          else base_attrs
-        in
-        Html.el "a" ~attrs [ Html.txt t.label ])
-      tabs
-  in
-  let tab_panels =
-    List.map
-      (fun (t : collection_tab) ->
-        let tab_entries =
-          List.filter
-            (fun (e : parsed_entry) ->
-              (not e.meta.draft)
-              && (e.collection = t.folder || e.collection = t.id))
-            all_entries
-        in
-        let disclaimer_node =
-          match t.disclaimer with
-          | None -> Html.empty
-          | Some text ->
-              Html.el "div"
-                ~attrs:[ ("class", "disclaimer-banner") ]
-                [ Html.el "p" [ Html.txt text ] ]
-        in
-        let panel_attrs =
-          if t.id = active_tab then [ ("data-tab-panel", t.id) ]
-          else [ ("data-tab-panel", t.id); ("hidden", "hidden") ]
-        in
-        Html.el "div" ~attrs:panel_attrs
-          [ disclaimer_node; render_article_list_node tab_entries ])
-      tabs
-  in
-  let page_title =
-    if config.description <> "" then config.description ^ " | " ^ config.title
-    else config.title
-  in
-  let head =
-    common_head ~page_title ~description:config.description ~canonical_path:"/"
-      ~config
-  in
-  let body =
-    [
-      Html.el "main"
-        ~attrs:[ ("class", "site-container") ]
-        [
-          Html.el "div"
-            ~attrs:[ ("class", "page-wrapper") ]
-            [
-              Html.el "header"
-                ~attrs:[ ("class", "site-header") ]
-                [ Html.el "h1" [ Html.txt config.title ]; github_node ];
-              Html.el "div"
-                ~attrs:[ ("class", "tabs-container") ]
-                [
-                  Html.el "nav"
-                    ~attrs:[ ("class", "tabs-nav"); ("aria-label", "Tabs") ]
-                    nav_links;
-                  Html.el "div" ~attrs:[ ("class", "tabs-content") ] tab_panels;
-                ];
-            ];
-        ];
-      subux_tabs_runtime_script;
-    ]
-  in
-  Html.to_document ~lang:config.lang ~head ~body
+let subux_tabs_runtime_script : Html.node = Html.el "script" [Html.raw {|(()=>{
+const panels=[...document.querySelectorAll('[data-tab-panel]')],links=[...document.querySelectorAll('a.tab-link[data-tab-id]')];
+const initial=panels.find(p=>!p.hidden)?.dataset.tabPanel;
+function select(tab){if(!panels.some(p=>p.dataset.tabPanel===tab))return false;
+ panels.forEach(p=>p.hidden=p.dataset.tabPanel!==tab);links.forEach(a=>{if(a.dataset.tabId===tab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});return true;}
+function restore(){const q=new URLSearchParams(location.search).get('tab');const path=location.pathname.split('/').filter(Boolean)[0];select(q||links.find(a=>new URL(a.href).pathname.split('/').filter(Boolean)[0]===path)?.dataset.tabId||initial);}
+document.addEventListener('click',e=>{const a=e.target.closest?.('a.tab-link[data-tab-id]');if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target||!select(a.dataset.tabId))return;e.preventDefault();const u=new URL(location.href);u.searchParams.set('tab',a.dataset.tabId);history.pushState(null,'',u);});
+window.addEventListener('popstate',restore);restore();})();|}]
 
-let render_blog_article ~(config : site_config)
-    ~(series : series_info option) (entry : parsed_entry) : string =
-  let date_node =
-    match entry.meta.date with
-    | None -> Html.empty
-    | Some d ->
-        Html.el "time"
-          ~attrs:[ ("datetime", format_iso d) ]
-          [ Html.txt (format_korean_full d) ]
-  in
-  let series_node =
-    match series with
-    | None -> Html.empty
-    | Some s ->
-        Html.el "aside"
-          ~attrs:[ ("class", "series-nav-box"); ("aria-label", "시리즈 목차") ]
-          [
-            Html.el "p"
-              ~attrs:[ ("class", "series-nav-label") ]
-              [ Html.txt ("시리즈 · " ^ s.name) ];
-            Html.el "ol"
-              ~attrs:[ ("class", "series-nav-list") ]
-              (List.map
-                 (fun (item : series_item) ->
-                   if item.is_current then
-                     Html.el "li"
-                       [
-                         Html.el "span"
-                           ~attrs:
-                             [
-                               ("class", "series-nav-current");
-                               ("aria-current", "page");
-                             ]
-                           [ Html.txt item.title ];
-                       ]
-                   else
-                     Html.el "li"
-                       [
-                         Html.el "a"
-                           ~attrs:
-                             [
-                               ("href", Slug.to_href item.slug);
-                               ("class", "series-nav-link");
-                             ]
-                           [ Html.txt item.title ];
-                       ])
-                 s.items);
-          ]
-  in
-  let desc =
-    match entry.meta.description with
-    | Some d when d <> "" -> d
-    | _ -> config.description
-  in
-  let head =
-    common_head ~page_title:entry.title ~description:desc
-      ~canonical_path:(Slug.to_href entry.slug)
-      ~config
-  in
-  let scripts =
-    if entry.rendered.has_mermaid then [ mermaid_runtime_script ] else []
-  in
-  let body =
-    [
-      Html.el "main"
-        ~attrs:[ ("class", "site-container") ]
-        [
-          Html.el "section"
-            ~attrs:[ ("class", "content-wrapper") ]
-            [
-              Html.el "nav"
-                ~attrs:[ ("class", "article-nav") ]
-                [
-                  Html.el "a"
-                    ~attrs:[ ("href", "/"); ("class", "back-link") ]
-                    [ Html.txt "← 처음으로" ];
-                ];
-              Html.el "article"
-                [
-                  Html.el "header"
-                    ~attrs:[ ("class", "article-header") ]
-                    [ Html.el "h1" [ Html.txt entry.title ]; date_node ];
-                  series_node;
-                  Html.el "div"
-                    ~attrs:[ ("class", "article-content") ]
-                    [ Html.raw entry.rendered.html ];
-                ];
-            ];
-        ]
-    ]
-    @ scripts
-  in
-  Html.to_document ~lang:config.lang ~head ~body
-
-let render_not_found ~(config : site_config) : string =
-  let page_title = "이곳엔 아무것도 없습니다 | " ^ config.title in
-  let head =
-    common_head ~page_title ~description:config.description
-      ~canonical_path:"/404.html" ~config
-  in
-  let body =
-    [
-      Html.el "main"
-        ~attrs:[ ("class", "site-container") ]
-        [
-          Html.el "div"
-            ~attrs:[ ("class", "not-found-page") ]
-            [
-              Html.el "h1"
-                ~attrs:[ ("class", "not-found-title") ]
-                [ Html.txt "이곳엔 아무것도 없습니다." ];
-              Html.el "a"
-                ~attrs:[ ("href", "/"); ("class", "not-found-link") ]
-                [ Html.txt "처음으로" ];
-            ];
-        ];
-    ]
-  in
-  Html.to_document ~lang:config.lang ~head ~body
-
-(* 2. Docs_mode Navbar, Search Modal, Home & Documentation Page Renderers *)
 let jt_runtime_script : Html.node =
   Html.el "script" [ Html.raw {|(function () {
   const root = document.documentElement;
@@ -655,6 +402,7 @@ let jt_runtime_script : Html.node =
   const input = document.getElementById('jt-search-input');
   const results = document.getElementById('jt-search-results');
   let indexData = null;
+  let indexPromise = null;
   let previousFocus = null;
   function renderResults() {
     if (!input || !results) return;
@@ -677,11 +425,12 @@ let jt_runtime_script : Html.node =
     previousFocus = document.activeElement;
     modal.hidden = false;
     if (input) input.focus();
-    if (!indexData) {
-      try { const response = await fetch('/search-index.json'); indexData = await response.json(); }
-      catch { indexData = []; }
-    }
-    renderResults();
+    if (!indexPromise) indexPromise = fetch('/search-index.json').then(async response => {
+      if (!response.ok) throw new Error('Search index unavailable');
+      indexData = await response.json();
+    }).catch(() => { indexPromise = null; indexData = null; });
+    await indexPromise;
+    if (!modal.hidden) renderResults();
   }
   function closeSearch() {
     if (!modal || modal.hidden) return;
@@ -732,7 +481,7 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
     List.map
       (fun (item : nav_item) ->
         Html.el "a"
-          ~attrs:([ ("href", item.link); ("class", "jt-nav-link") ]
+          ~attrs:([ ("href", safe_href item.link); ("class", "jt-nav-link") ]
             @ if normalize_href_for_match item.link = normalize_href_for_match current_href
               then [ ("aria-current", "page") ] else [])
           [ Html.txt item.text ])
@@ -773,7 +522,7 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
         Html.el "a"
           ~attrs:
             [
-              ("href", gh_url);
+              ("href", safe_href gh_url);
               ("target", "_blank");
               ("rel", "noopener noreferrer");
               ("class", "github-link");
@@ -802,7 +551,8 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
                   Html.el "span" ~attrs:[ ("class", "middle") ] [];
                   Html.el "span" ~attrs:[ ("class", "bottom") ] [] ] ];
           Html.el "nav"
-            ~attrs:[ ("id", "jt-main-nav"); ("class", "jt-nav-links"); ("aria-label", "Main Navigation") ]
+            ~attrs:[ ("id", "jt-main-nav"); ("class", "jt-nav-links");
+                     ("data-ready", "false"); ("data-open", "false"); ("aria-label", "Main Navigation") ]
             (nav_links @ [ search_btn;
               Html.el "div" ~attrs:[ ("class", "jt-appearance") ]
                 [ Html.el "span" ~attrs:[ ("class", "jt-appearance-label") ] [ Html.txt "Appearance" ]; theme_btn ];
@@ -834,6 +584,7 @@ let render_jt_search_modal (config : site_config) : Html.node =
                   ("id", "jt-search-input");
                   ("class", "jt-search-input");
                   ("placeholder", "Search docs...");
+                  ("aria-label", "Search query");
                   ("autocomplete", "off");
                 ]
               ();
@@ -845,6 +596,298 @@ let render_jt_search_modal (config : site_config) : Html.node =
       ]
 
 
+
+let search_button (config : site_config) =
+  if config.enable_search then Html.el "button" ~attrs:[("type", "button");
+    ("id", "jt-search-open"); ("class", "jt-search-btn"); ("aria-label", "Search ⌘K")]
+    [Html.txt "Search ⌘K"] else Html.empty
+
+(* 1. Blog_mode Home, Article & 404 Renderers *)
+let render_article_list_node (entries : parsed_entry list) : Html.node =
+  if entries = [] then
+    Html.el "div"
+      ~attrs:[ ("class", "empty-state") ]
+      [ Html.el "p" [ Html.txt "No articles yet. Will be updated soon..." ] ]
+  else
+    let groups = group_entries_by_year entries in
+    Html.el "nav"
+      ~attrs:[ ("class", "articles") ]
+      (List.map
+         (fun (year, year_entries) ->
+           let year_str = Int.to_string year in
+           Html.el "div"
+             [
+               Html.el "h2"
+                 [
+                   Html.el "time"
+                     ~attrs:[ ("datetime", year_str) ]
+                     [ Html.txt (year_str ^ "년") ];
+                 ];
+               Html.el "ul"
+                 (List.map
+                    (fun entry ->
+                      let date_node =
+                        match entry.meta.date with
+                        | None -> Html.empty
+                        | Some d ->
+                            Html.el "time"
+                              ~attrs:[ ("datetime", format_iso d) ]
+                              [ Html.txt (format_korean_short d) ]
+                      in
+                      Html.el "li"
+                        [
+                          date_node;
+                          Html.el "a"
+                            ~attrs:
+                              [
+                                ("href", Slug.to_href entry.slug);
+                                ("class", "article-link");
+                              ]
+                            [ Html.txt entry.title ];
+                        ])
+                    year_entries);
+             ])
+         groups)
+
+let render_blog_home ?stylesheet ~(config : site_config) ~(active_tab : string)
+    (all_entries : parsed_entry list) : string =
+  let tabs =
+    if config.tabs = [] then default_blog_config.tabs else config.tabs
+  in
+  let github_node =
+    match config.github_url with
+    | None -> Html.empty
+    | Some gh_url ->
+        Html.el "a"
+          ~attrs:
+            [
+              ("href", safe_href gh_url);
+              ("target", "_blank");
+              ("rel", "noopener noreferrer");
+              ("class", "github-link");
+              ("title", "GitHub");
+            ]
+          [
+            Html.el "span" ~attrs:[ ("class", "sr-only") ] [ Html.txt "GitHub" ];
+            github_svg_node;
+          ]
+  in
+  let nav_links =
+    List.map
+      (fun (t : collection_tab) ->
+        let is_active = t.id = active_tab in
+        let base_attrs =
+          [
+            ("href", "/" ^ t.id ^ "/");
+            ("class", "tab-link");
+            ("data-tab-id", t.id);
+          ]
+        in
+        let attrs =
+          if is_active then base_attrs @ [ ("aria-current", "page") ]
+          else base_attrs
+        in
+        Html.el "a" ~attrs [ Html.txt t.label ])
+      tabs
+  in
+  let tab_panels =
+    List.map
+      (fun (t : collection_tab) ->
+        let tab_entries =
+          List.filter
+            (fun (e : parsed_entry) ->
+              (not e.meta.draft)
+              && (e.collection = t.folder || e.collection = t.id))
+            all_entries
+        in
+        let disclaimer_node =
+          match t.disclaimer with
+          | None -> Html.empty
+          | Some text ->
+              Html.el "div"
+                ~attrs:[ ("class", "disclaimer-banner") ]
+                [ Html.el "p" [ Html.txt text ] ]
+        in
+        let panel_attrs =
+          if t.id = active_tab then [ ("data-tab-panel", t.id) ]
+          else [ ("data-tab-panel", t.id); ("hidden", "hidden") ]
+        in
+        Html.el "div" ~attrs:panel_attrs
+          [ disclaimer_node; render_article_list_node tab_entries ])
+      tabs
+  in
+  let page_title =
+    if config.description <> "" then config.description ^ " | " ^ config.title
+    else config.title
+  in
+  let head =
+    common_head ~stylesheet ~page_title ~description:config.description ~canonical_path:"/"
+      ~config
+  in
+  let body =
+    [
+      Html.el "main"
+        ~attrs:[ ("class", "site-container"); ("id", "main-content"); ("tabindex", "-1") ]
+        [
+          Html.el "div"
+            ~attrs:[ ("class", "page-wrapper") ]
+            [
+              Html.el "header"
+                ~attrs:[ ("class", "site-header") ]
+                [ Html.el "h1" [ Html.txt config.title ]; search_button config; github_node ];
+              Html.el "div"
+                ~attrs:[ ("class", "tabs-container") ]
+                [
+                  Html.el "nav"
+                    ~attrs:[ ("class", "tabs-nav"); ("aria-label", "Tabs") ]
+                    nav_links;
+                  Html.el "div" ~attrs:[ ("class", "tabs-content") ] tab_panels;
+                ];
+            ];
+        ];
+      render_jt_search_modal config;
+      jt_runtime_script;
+      subux_tabs_runtime_script;
+    ]
+  in
+  document ~customized:(config.custom_css <> None || config.custom_js <> None)
+    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+
+let render_blog_article ?stylesheet ~(config : site_config)
+    ~(series : series_info option) (entry : parsed_entry) : string =
+  let date_node =
+    match entry.meta.date with
+    | None -> Html.empty
+    | Some d ->
+        Html.el "time"
+          ~attrs:[ ("datetime", format_iso d) ]
+          [ Html.txt (format_korean_full d) ]
+  in
+  let series_node =
+    match series with
+    | None -> Html.empty
+    | Some s ->
+        Html.el "aside"
+          ~attrs:[ ("class", "series-nav-box"); ("aria-label", "시리즈 목차") ]
+          [
+            Html.el "p"
+              ~attrs:[ ("class", "series-nav-label") ]
+              [ Html.txt ("시리즈 · " ^ s.name) ];
+            Html.el "ol"
+              ~attrs:[ ("class", "series-nav-list") ]
+              (List.map
+                 (fun (item : series_item) ->
+                   if item.is_current then
+                     Html.el "li"
+                       [
+                         Html.el "span"
+                           ~attrs:
+                             [
+                               ("class", "series-nav-current");
+                               ("aria-current", "page");
+                             ]
+                           [ Html.txt item.title ];
+                       ]
+                   else
+                     Html.el "li"
+                       [
+                         Html.el "a"
+                           ~attrs:
+                             [
+                               ("href", Slug.to_href item.slug);
+                               ("class", "series-nav-link");
+                             ]
+                           [ Html.txt item.title ];
+                       ])
+                 s.items);
+          ]
+  in
+  let desc =
+    match entry.meta.description with
+    | Some d when d <> "" -> d
+    | _ -> config.description
+  in
+  let head =
+    common_head ~stylesheet ~page_title:entry.title ~description:desc
+      ~canonical_path:(Slug.to_href entry.slug)
+      ~config
+  in
+  let schema = Json_parser.Object ([
+    ("@context", Json_parser.String "https://schema.org");
+    ("@type", Json_parser.String "BlogPosting");
+    ("headline", Json_parser.String entry.title);
+    ("url", Json_parser.String (safe_href (base_url config ^ Slug.to_href entry.slug))) ] @
+    (match entry.meta.date with None -> [] | Some d -> [("datePublished", Json_parser.String (format_iso d))])) in
+  let head = head @ [Html.el "script" ~attrs:[("type", "application/ld+json")]
+    [Html.raw (escape_raw_text "\\u003c" (Json_parser.to_string schema))]] in
+  let scripts =
+    [render_jt_search_modal config; jt_runtime_script] @
+    (if entry.rendered.has_mermaid then [ mermaid_runtime_script ] else [])
+  in
+  let body =
+    [
+      Html.el "main"
+        ~attrs:[ ("class", "site-container"); ("id", "main-content"); ("tabindex", "-1") ]
+        [
+          Html.el "section"
+            ~attrs:[ ("class", "content-wrapper") ]
+            [
+              Html.el "nav"
+                ~attrs:[ ("class", "article-nav"); ("aria-label", "Article navigation") ]
+                [
+                  Html.el "a"
+                    ~attrs:[ ("href", "/"); ("class", "back-link") ]
+                    [ Html.txt "← 처음으로" ];
+                  search_button config;
+                ];
+              Html.el "article"
+                [
+                  Html.el "header"
+                    ~attrs:[ ("class", "article-header") ]
+                    [ Html.el "h1" [ Html.txt entry.title ]; date_node ];
+                  series_node;
+                  Html.el "div"
+                    ~attrs:[ ("class", "article-content") ]
+                    [ Html.raw entry.rendered.html ];
+                ];
+            ];
+        ]
+    ]
+    @ scripts
+  in
+  document ~customized:(config.custom_css <> None || config.custom_js <> None)
+    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+
+let render_not_found_page ?stylesheet ~(config : site_config) () : string =
+  let page_title = "이곳엔 아무것도 없습니다 | " ^ config.title in
+  let head =
+    common_head ~stylesheet ~page_title ~description:config.description
+      ~canonical_path:"/404.html" ~config
+  in
+  let body =
+    [
+      Html.el "main"
+        ~attrs:[ ("class", "site-container"); ("id", "main-content"); ("tabindex", "-1") ]
+        [
+          Html.el "div"
+            ~attrs:[ ("class", "not-found-page") ]
+            [
+              Html.el "h1"
+                ~attrs:[ ("class", "not-found-title") ]
+                [ Html.txt "이곳엔 아무것도 없습니다." ];
+              Html.el "a"
+                ~attrs:[ ("href", "/"); ("class", "not-found-link") ]
+                [ Html.txt "처음으로" ];
+            ];
+        ];
+    ]
+  in
+  document ~customized:(config.custom_css <> None || config.custom_js <> None)
+    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+
+let render_not_found ~config = render_not_found_page ~config ()
+
+(* 2. Docs_mode Navbar, Search Modal, Home & Documentation Page Renderers *)
 let effective_sidebar_groups (config : site_config)
     (all_docs : parsed_entry list) : sidebar_group list =
   let doc_entries =
@@ -903,7 +946,7 @@ let find_prev_next_from_sidebar (groups : sidebar_group list)
   in
   loop None flat
 
-let render_docs_home ~(config : site_config) (entry : parsed_entry) :
+let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) :
     string =
   let hero_node =
     match entry.meta.hero with
@@ -990,27 +1033,30 @@ let render_docs_home ~(config : site_config) (entry : parsed_entry) :
         ]
   in
   let head =
-    common_head ~page_title:config.title ~description:config.description
+    common_head ~stylesheet ~page_title:config.title ~description:config.description
       ~canonical_path:"/" ~config
   in
   let body =
     [
       render_jt_navbar config;
-      Html.el "main" [ hero_node; features_node; body_md_node ];
+      Html.el "main" ~attrs:[("id", "main-content"); ("tabindex", "-1")] [ hero_node; features_node; body_md_node ];
       render_jt_search_modal config;
       jt_runtime_script;
+      (if entry.rendered.has_mermaid then mermaid_runtime_script else Html.empty);
     ]
   in
-  Html.to_document ~lang:config.lang ~head ~body
+  document ~customized:(config.custom_css <> None || config.custom_js <> None)
+    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
 
-let render_docs_page ~(config : site_config)
+let render_docs_page ?stylesheet ~(config : site_config)
     ~(all_docs : parsed_entry list) (entry : parsed_entry) : string =
   let current_href = Slug.to_href entry.slug in
   let norm_cur = normalize_href_for_match current_href in
   let groups = effective_sidebar_groups config all_docs in
   let sidebar_node =
     Html.el "aside"
-      ~attrs:[ ("id", "jt-sidebar"); ("class", "jt-sidebar"); ("aria-label", "Sidebar Navigation") ]
+      ~attrs:[ ("id", "jt-sidebar"); ("class", "jt-sidebar");
+               ("data-ready", "false"); ("data-open", "false"); ("aria-label", "Sidebar Navigation") ]
       (List.map
          (fun (g : sidebar_group) ->
            Html.el "div"
@@ -1029,12 +1075,12 @@ let render_docs_page ~(config : site_config)
                       let attrs =
                         if is_active then
                           [
-                            ("href", item.link);
+                            ("href", safe_href item.link);
                             ("class", "jt-sidebar-link active");
                             ("aria-current", "page");
                           ]
                         else
-                          [ ("href", item.link); ("class", "jt-sidebar-link") ]
+                          [ ("href", safe_href item.link); ("class", "jt-sidebar-link") ]
                       in
                       Html.el "li"
                         [ Html.el "a" ~attrs [ Html.txt item.text ] ])
@@ -1045,11 +1091,13 @@ let render_docs_page ~(config : site_config)
   let outline_node =
     if entry.rendered.toc = [] then
       Html.el "aside"
-        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline"); ("aria-label", "On this page") ]
+        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline");
+                 ("data-ready", "false"); ("data-open", "false"); ("aria-label", "On this page") ]
         []
     else
       Html.el "aside"
-        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline"); ("aria-label", "On this page") ]
+        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline");
+                 ("data-ready", "false"); ("data-open", "false"); ("aria-label", "On this page") ]
         [
           Html.el "a" ~attrs:[ ("class", "jt-outline-top"); ("href", "#") ]
             [ Html.txt "Return to top" ];
@@ -1080,7 +1128,7 @@ let render_docs_page ~(config : site_config)
     | None -> Html.el "div" []
     | Some (text, href) ->
         Html.el "a"
-          ~attrs:[ ("href", href); ("class", "jt-pager-link prev") ]
+          ~attrs:[ ("href", safe_href href); ("class", "jt-pager-link prev") ]
           [
             Html.el "span"
               ~attrs:[ ("class", "jt-pager-label") ]
@@ -1095,7 +1143,7 @@ let render_docs_page ~(config : site_config)
     | None -> Html.el "div" []
     | Some (text, href) ->
         Html.el "a"
-          ~attrs:[ ("href", href); ("class", "jt-pager-link next") ]
+          ~attrs:[ ("href", safe_href href); ("class", "jt-pager-link next") ]
           [
             Html.el "span"
               ~attrs:[ ("class", "jt-pager-label") ]
@@ -1114,7 +1162,7 @@ let render_docs_page ~(config : site_config)
   in
   let page_title = entry.title ^ " | " ^ config.title in
   let head =
-    common_head ~page_title ~description:config.description
+    common_head ~stylesheet ~page_title ~description:config.description
       ~canonical_path:current_href ~config
   in
   let scripts =
@@ -1145,11 +1193,11 @@ let render_docs_page ~(config : site_config)
         [
           sidebar_node;
           Html.el "main"
-            ~attrs:[ ("class", "jt-doc-main") ]
+            ~attrs:[ ("class", "jt-doc-main"); ("id", "main-content"); ("tabindex", "-1") ]
             [
               Html.el "article"
                 ~attrs:[ ("class", "article-content") ]
-                [ Html.raw entry.rendered.html ];
+                [ Html.el "h1" [Html.txt entry.title]; Html.raw entry.rendered.html ];
               pager_footer;
             ];
           outline_node;
@@ -1158,23 +1206,38 @@ let render_docs_page ~(config : site_config)
     ]
     @ scripts
   in
-  Html.to_document ~lang:config.lang ~head ~body
+  document ~customized:(config.custom_css <> None || config.custom_js <> None)
+    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
 
 (* 3. Search Index & Sitemap Generators *)
+let utf8_prefix limit text =
+  let n = min (String.length text) (max 0 limit) in
+  let rec boundary n =
+    if n = 0 || n = String.length text || Char.code text.[n] land 0xc0 <> 0x80 then n
+    else boundary (n - 1)
+  in String.sub text 0 (boundary n)
+
+let normalize_whitespace text =
+  String.split_on_char ' ' (String.map (function '\n' | '\r' | '\t' -> ' ' | c -> c) text)
+  |> List.filter (fun s -> s <> "") |> String.concat " "
+
 let build_search_index_json (entries : parsed_entry list) : string =
-  let items =
-    entries
-    |> List.filter (fun (e : parsed_entry) -> not e.meta.draft)
-    |> List.map (fun (e : parsed_entry) ->
-           Json_parser.Object
-             [
-               ("title", Json_parser.String e.title);
-               ("href", Json_parser.String (Slug.to_href e.slug));
-               ("collection", Json_parser.String e.collection);
-               ("text", Json_parser.String e.rendered.plain_text);
-             ])
+  let entries = List.filter (fun (e : parsed_entry) -> not e.meta.draft) entries in
+  let item (e : parsed_entry) text = Json_parser.Object [
+    ("title", Json_parser.String e.title); ("href", Json_parser.String (Slug.to_href e.slug));
+    ("collection", Json_parser.String e.collection); ("text", Json_parser.String text)] in
+  let metadata = Json_parser.to_string (Json_parser.Array (List.map (fun e -> item e "") entries)) in
+  let budget = max 0 ((19000 - String.length metadata) / max 1 (List.length entries)) in
+  let preview e =
+    let headings = String.concat " " (List.map (fun (t : toc_item) -> t.text) e.rendered.toc) in
+    let text = normalize_whitespace (headings ^ " " ^ e.rendered.plain_text) in
+    let rec fit n =
+      let text = utf8_prefix n text in
+      if String.length (Json_parser.to_string (Json_parser.String text)) - 2 <= budget || n = 0 then text
+      else fit (n - 1)
+    in fit (min 400 budget)
   in
-  Json_parser.to_string (Json_parser.Array items)
+  Json_parser.to_string (Json_parser.Array (List.map (fun e -> item e (preview e)) entries))
 
 let build_sitemap_xml (config : site_config) (entries : parsed_entry list) :
     string =
@@ -1222,14 +1285,14 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
           match tabs with t :: _ -> t.id | [] -> "articles"
         in
         let home_html =
-          render_blog_home ~config ~active_tab:first_tab_id published
+          render_blog_home ~stylesheet:css_bundle ~config ~active_tab:first_tab_id published
         in
         let tab_pages =
           List.map
             (fun (t : collection_tab) ->
               {
                 out_path = t.id ^ "/index.html";
-                content = render_blog_home ~config ~active_tab:t.id published;
+                content = render_blog_home ~stylesheet:css_bundle ~config ~active_tab:t.id published;
               })
             tabs
         in
@@ -1245,7 +1308,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
               in
               {
                 out_path = out_path_of_slug e.slug;
-                content = render_blog_article ~config ~series e;
+                content = render_blog_article ~stylesheet:css_bundle ~config ~series e;
               })
             published
         in
@@ -1263,7 +1326,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
           | Some home_entry ->
               {
                 out_path = "index.html";
-                content = render_docs_home ~config home_entry;
+                content = render_docs_home ~stylesheet:css_bundle ~config home_entry;
               }
           | None ->
               let synthetic_home =
@@ -1290,7 +1353,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
               in
               {
                 out_path = "index.html";
-                content = render_docs_home ~config synthetic_home;
+                content = render_docs_home ~stylesheet:css_bundle ~config synthetic_home;
               }
         in
         let doc_pages =
@@ -1301,7 +1364,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
                  {
                    out_path = out_path_of_slug e.slug;
                    content =
-                     render_docs_page ~config ~all_docs:published e;
+                     render_docs_page ~stylesheet:css_bundle ~config ~all_docs:published e;
                  })
         in
         home_artifact :: doc_pages
@@ -1313,8 +1376,10 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
           match tabs with t :: _ -> t.id | [] -> "articles"
         in
         let home_html =
-          render_blog_home ~config ~active_tab:first_tab_id published
+          render_blog_home ~stylesheet:css_bundle ~config ~active_tab:first_tab_id published
         in
+        let tab_pages = List.map (fun (t : collection_tab) ->
+          {out_path=t.id ^ "/index.html"; content=render_blog_home ~stylesheet:css_bundle ~config ~active_tab:t.id published}) tabs in
         let rendered_pages =
           List.filter_map
             (fun (e : parsed_entry) ->
@@ -1323,7 +1388,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
                 Some
                   {
                     out_path = "index.html";
-                    content = render_docs_home ~config e;
+                    content = render_docs_home ~stylesheet:css_bundle ~config e;
                   }
               else if Slug.to_string e.slug = "" then None
               else if e.meta.layout = Some Layout_doc || e.collection = "contents" || e.collection = "docs"
@@ -1332,7 +1397,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
                   {
                     out_path = out_path_of_slug e.slug;
                     content =
-                      render_docs_page ~config ~all_docs:published e;
+                      render_docs_page ~stylesheet:css_bundle ~config ~all_docs:published e;
                   }
               else
                 let series =
@@ -1345,18 +1410,23 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
                 Some
                   {
                     out_path = out_path_of_slug e.slug;
-                    content = render_blog_article ~config ~series e;
+                    content = render_blog_article ~stylesheet:css_bundle ~config ~series e;
                   })
             published
         in
         if List.exists (fun a -> a.out_path = "index.html") rendered_pages then
-          rendered_pages
-        else { out_path = "index.html"; content = home_html } :: rendered_pages
+          tab_pages @ rendered_pages
+        else { out_path = "index.html"; content = home_html } :: tab_pages @ rendered_pages
   in
   let system_artifacts =
     [
+      { out_path = "favicon.svg"; content = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><text x=\"8\" y=\"50\" font-size=\"52\">S</text></svg>" };
       { out_path = "assets/subux-theme.css"; content = css_bundle };
-      { out_path = "404.html"; content = render_not_found ~config };
+      { out_path = String.sub (css_asset css_bundle) 1 (String.length (css_asset css_bundle) - 1); content = Token_compiler.minify_css css_bundle };
+      { out_path = "_headers"; content =
+          css_asset css_bundle ^ "\n  Cache-Control: public, max-age=31536000, immutable\n/assets/subux-theme.css\n  Cache-Control: public, max-age=0, must-revalidate\n/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n  Referrer-Policy: strict-origin-when-cross-origin\n" };
+      { out_path = "robots.txt"; content = "User-agent: *\nAllow: /\nSitemap: " ^ base_url config ^ "/sitemap.xml\n" };
+      { out_path = "404.html"; content = render_not_found_page ~stylesheet:css_bundle ~config () };
       {
         out_path = "search-index.json";
         content = build_search_index_json published;

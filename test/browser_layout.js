@@ -2,6 +2,8 @@
 // running servers documented in STYLE-VERIFICATION.md. Baselines are originals.
 async (currentPage) => {
   const context = await currentPage.context().browser().newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' });
+  context.setDefaultTimeout(30000);
+  context.setDefaultNavigationTimeout(60000);
   const page = await context.newPage();
   try {
 
@@ -42,18 +44,28 @@ async (currentPage) => {
     }
     // Separate default-theme fixture keeps search verification independent of
     // just-tips, whose original configuration does not enable search.
+    let indexAttempts = 0;
+    await context.route('http://127.0.0.1:4176/search-index.json', route =>
+      ++indexAttempts === 1 ? route.fulfill({ status: 503, body: 'Temporary failure' }) : route.fallback());
     await page.goto('http://127.0.0.1:4176/');
+    if (await page.locator('#jt-main-nav').isVisible()) throw new Error('Default mobile menu starts open');
     await page.getByRole('button', { name: 'Toggle navigation' }).click();
+    if (!await page.locator('#jt-main-nav').isVisible()) throw new Error('Default mobile menu did not open');
+    const failedIndex = page.waitForResponse(response => response.url().endsWith('/search-index.json') && response.status() === 503);
+    await page.getByRole('button', { name: 'Search documentation' }).click();
+    await failedIndex;
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Search documentation' }).click();
     await page.getByRole('searchbox').fill('깃');
     await page.getByRole('link', { name: '깃 설정 팁', exact: true }).waitFor();
+    if (indexAttempts !== 2) throw new Error('Search did not retry exactly once after index failure');
     await page.keyboard.press('Escape');
     const focusRestored = await page.getByRole('button', { name: 'Search documentation' })
       .evaluate(el => el === document.activeElement);
     if (!focusRestored) throw new Error('Search did not restore focus');
     await page.getByRole('link', { name: '문서로 바로가기' }).click();
     await page.getByRole('heading', { name: '일반적인 리눅스 설정 명령어 모음' }).waitFor();
-    report.push({ searchFocusRestored: true, linuxPage: true });
+    report.push({ searchFocusRestored: true, searchRetry: true, linuxPage: true });
     return report;
   } finally { await context.close(); }
 }

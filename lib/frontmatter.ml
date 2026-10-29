@@ -83,15 +83,22 @@ let count_indent line =
 
 let strip_inline_comment raw =
   let len = String.length raw in
+  let rec quote_start i =
+    if i < 0 then true
+    else match raw.[i] with
+      | ' ' | '\t' -> quote_start (i - 1)
+      | '[' | ',' -> true
+      | _ -> false
+  in
   let rec loop i in_single in_double =
     if i >= len then raw
     else
       let c = raw.[i] in
       if c = '\\' && in_double && i + 1 < len then
         loop (i + 2) in_single in_double
-      else if c = '\'' && not in_double && (in_single || i = 0 || raw.[i - 1] = '[' || raw.[i - 1] = ',') then
+      else if c = '\'' && not in_double && (in_single || quote_start (i - 1)) then
         loop (i + 1) (not in_single) in_double
-      else if c = '"' && not in_single && (in_double || i = 0 || raw.[i - 1] = '[' || raw.[i - 1] = ',') then
+      else if c = '"' && not in_single && (in_double || quote_start (i - 1)) then
         loop (i + 1) in_single (not in_double)
       else if
         (not in_single) && (not in_double) && c = '#'

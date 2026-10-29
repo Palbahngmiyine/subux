@@ -231,9 +231,11 @@ let parse_config_json (base : site_config) (raw_json : string) :
           description = get_str "description" base.description;
           lang = get_str "lang" base.lang;
           base_url = get_str "baseUrl" base.base_url;
-          github_url;
           enable_search = (match List.assoc_opt "enableSearch" fields with
-            | Some (Json_parser.Bool value) -> value | _ -> base.enable_search);
+            | Some (Json_parser.Bool b) -> b | _ -> base.enable_search);
+          inline_css = (match List.assoc_opt "inlineCss" fields with
+            | Some (Json_parser.Bool b) -> b | _ -> base.inline_css);
+          github_url;
           mode;
           area_tone;
           nav;

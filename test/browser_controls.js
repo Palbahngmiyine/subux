@@ -9,6 +9,8 @@ async page => {
     for (const colorScheme of ['light', 'dark']) {
       for (const state of ['navigation', 'sidebar']) {
         const context = await browser.newContext({ viewport: { width: 390, height: 900 }, colorScheme, reducedMotion: 'reduce' });
+        context.setDefaultTimeout(30000);
+        context.setDefaultNavigationTimeout(60000);
         try {
           const files = [];
           for (const port of [4175, 4173]) {
@@ -21,6 +23,7 @@ async page => {
             const button = p.getByRole('button', {
               name: state === 'sidebar' ? 'Menu' : port === 4175 ? 'mobile navigation' : 'Toggle navigation', exact: true,
             });
+            const closedWidth = await p.evaluate(() => document.documentElement.clientWidth);
             await button.click();
             await p.mouse.move(-10, -10);
             await p.waitForTimeout(1000);
@@ -38,7 +41,7 @@ async page => {
             else await button.click();
             await p.waitForTimeout(700);
             if (state === 'sidebar') {
-              if (await p.evaluate(() => document.documentElement.clientWidth) !== 375)
+              if (await p.evaluate(() => document.documentElement.clientWidth) !== closedWidth)
                 throw new Error(`${port}: root scrollbar was not restored`);
               await p.mouse.move(380, 500);
               await p.mouse.wheel(0, 200);

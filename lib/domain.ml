@@ -332,6 +332,8 @@ type site_config = {
   enable_search : bool;
   custom_js : string option;
   custom_css : string option;
+
+  inline_css : bool;
 }
 
 let default_blog_config =
@@ -367,6 +369,8 @@ let default_blog_config =
     enable_search = true;
     custom_js = None;
     custom_css = None;
+
+    inline_css = true;
   }
 
 let default_docs_config =
@@ -399,4 +403,6 @@ let default_docs_config =
     enable_search = true;
     custom_js = None;
     custom_css = None;
+
+    inline_css = true;
   }

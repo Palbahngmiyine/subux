@@ -201,6 +201,7 @@ type site_config = {
   enable_search : bool;
   custom_js : string option; (** Optional trusted module script content, loaded by the CLI. *)
   custom_css : string option; (** Optional trusted stylesheet content, loaded by the CLI. *)
+  inline_css : bool; (** Inline the compiled theme in each page; defaults to true. *)
 }
 
 val default_blog_config : site_config

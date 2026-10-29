@@ -38,8 +38,8 @@ values, so referenced resources must be available at those URLs.
 
 Keep site-specific color and font changes in the CSS profile's `--sx-*` custom
 properties. Navigation, sidebar and search settings belong in `subux.json`.
-The just-tips example disables search to match its original configuration; the
-default is enabled. Its theme follows system preferences and the theme switch.
+Both examples disable search to match their originals; the default is enabled.
+The just-tips theme follows system preferences and the theme switch.
 The subux.dev profile uses the original site's light theme in both OS modes.
 
 Both profiles load fonts/icons and optional syntax highlighters from public CDNs.
@@ -47,3 +47,7 @@ If highlighting fails, escaped native code remains readable; exact visual
 verification reports the failure. Subux itself gains no npm/opam runtime
 dependency. See [the verification record](../STYLE-VERIFICATION.md) for the
 original revisions, browser conditions and current comparison results.
+
+Sites with custom CSS/JavaScript retain the full theme and public tokens, including
+styles for dynamically added classes. The default site keeps per-page critical CSS
+optimization. `inlineCss: false` selects the fingerprinted external theme instead.

@@ -30,6 +30,42 @@ proof of the current public deployment. Generated sites, PNGs, manifests and
 temporary source clones are ignored local evidence rather than committed assets.
 The preview and reference servers were stopped after verification.
 
+## Integration with current main
+
+The PR integrates `main` at `e1fec71`, preserving its default critical CSS,
+heading normalization, metadata, asset fingerprints and accessibility changes.
+Customized sites retain the full theme/public tokens for dynamic selectors.
+Closed/uninitialized menu attributes preserve built-in state rules in default
+critical CSS. The blog profile retains source image corners, intrinsic video
+ratios and its code-comment token; default theme improvements remain enabled.
+
+After integration, fresh browser comparisons against archived pre-integration
+Subux output passed:
+
+| Check | Result |
+| --- | --- |
+| All 17 routes, complete viewport scroll coverage | 243/243 identical: 108 desktop, 135 mobile |
+| Open mobile navigation/sidebar, light and dark | 4/4 identical |
+| Open mobile outline at scroll 0, 32 and 750, light and dark | 6/6 identical |
+| OS-dark home/document viewports | 6/6 identical |
+
+These are integration equivalence checks; the earlier 246-case matrix above is
+the direct comparison against VitePress/Qwik. Current document heights differ
+from those earlier captures, so the fresh matrix derives every offset from
+measured heights and independently passes the full route/coverage gate.
+Browser requests were fulfilled with actual generated files and their MIME
+types; no preview/reference HTTP servers were restarted. External fonts and
+highlighters still loaded normally. The final docs output subsequently changed
+only initial `data-ready="false"` / `data-open="false"` attributes, which the same
+runtime initializes before captures; the artifact delta was checked explicitly.
+
+Fresh interaction checks passed code-copy contents/reset, theme persistence,
+mobile navigation, sidebar focus containment, backdrop/Escape dismissal, outline
+positioning, default-menu visibility, search focus restoration and navigation.
+A deliberately failed search-index response was retried successfully on reopen.
+`dune build`, `dune runtest` (including Lighthouse regressions), and
+`dune exec subux -- check` passed; the CLI check covered 4 entries/16 artifacts.
+
 ## Browser conditions and limits
 
 The controlled baseline uses installed headed Chrome 156.0.8078.49 with
@@ -52,6 +88,9 @@ capture policy, on both sites. Production profiles retain normal GIF animation.
 
 The runner captures actual viewports with 150px overlap, checks dimensions and
 scroll position before/after each capture, and rejects gaps or unexpected hover.
+It scrolls native lazy images into view before decoding. Outline captures wait
+for native overlay scrollbars to finish fading; scroll-lock checks compare the
+restored width with its measured initial value, supporting both scrollbar modes.
 Chrome's full-page capture removed classic scrollbars and changed the rendered
 width in this environment, so it is not used as an acceptance gate.
 Native video controls remain visible. Playback at 16× followed by a completed

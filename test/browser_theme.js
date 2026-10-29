@@ -1,8 +1,13 @@
 // Compare OS-dark rendering against both originals at the acceptance viewports.
 // just-tips follows the OS; the original subux.dev remains light.
 async page => {
-  const browser=page.context().browser();
+  const browser=await page.context().browser().browserType().launch({
+    channel:'chrome',headless:false,
+    args:['--disable-gpu-rasterization','--force-color-profile=srgb','--blink-settings=imageAnimationPolicy=2'],
+  });
   const context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'dark',reducedMotion:'reduce'});
+  context.setDefaultTimeout(30000);
+  context.setDefaultNavigationTimeout(60000);
   const p=await context.newPage();
   const report=[];
   try {
@@ -23,5 +28,5 @@ async page => {
       }
     }
     return report;
-  }finally{await context.close();}
+  }finally{await context.close();await browser.close();}
 }

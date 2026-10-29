@@ -1,6 +1,8 @@
 // Real interactions on generated pages; no source styles or screenshots are replaced.
 async (currentPage) => {
   const context = await currentPage.context().browser().newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' });
+  context.setDefaultTimeout(30000);
+  context.setDefaultNavigationTimeout(60000);
   const page = await context.newPage();
   try {
 

@@ -5,6 +5,8 @@ async page => {
     const context = await page.context().browser().newContext({
       viewport: { width: 390, height: 900 }, colorScheme, reducedMotion: 'reduce',
     });
+    context.setDefaultTimeout(30000);
+    context.setDefaultNavigationTimeout(60000);
     try {
       const pages = await Promise.all([context.newPage(), context.newPage()]);
       for (const [i, p] of pages.entries()) {
@@ -21,7 +23,8 @@ async page => {
           const button = p.locator(i ? '#jt-outline-toggle' : '.VPLocalNavOutlineDropdown button');
           await button.click();
           await p.mouse.move(0, 0);
-          await p.waitForTimeout(650);
+          // Let native overlay scrollbars finish fading on both pages too.
+          await p.waitForTimeout(2500);
           const path = `output/playwright/outline-${colorScheme}-${y}-${i ? 'subux' : 'reference'}.png`;
           await p.screenshot({ path, animations: 'disabled' });
           files.push(path);

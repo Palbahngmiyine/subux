@@ -1,6 +1,10 @@
 /* Original subux.dev font and footnote customization, opt-in per site. */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
 :root { --sx-font-mono: 'SF Mono', Menlo, Monaco, Consolas, monospace; --sx-profile-footnote: #3ba3d9; --sx-profile-footnote-underline: rgba(59, 163, 217, .4); }
+:root { --sx-color-code-comment: #6a737d; }
+.article-content img { border-radius: 0; }
+.article-content .article-video { aspect-ratio: auto; }
+.article-content a:where(:not(sup a):not(.header-anchor)) { text-decoration: none; }
 sup a { color: var(--sx-profile-footnote); text-decoration-color: var(--sx-profile-footnote-underline); }
 .article-content .table-wrapper { display: contents; }
 /* The source site's universal font rule also applies to highlight spans. */

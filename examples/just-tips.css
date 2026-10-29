@@ -201,7 +201,7 @@ a.jt-sidebar-link[aria-current='page'] { color: var(--sx-color-link); background
 .jt-doc-main :not(pre) > code { background: var(--sx-profile-switch-bg); }
 .jt-navbar { z-index: 31; }
 .jt-local-chevron { transform: rotate(-90deg); width: 12px; height: 12px; margin-left: 4px; }
-.jt-outline a { font-size: 14px; font-weight: 400; }
+.jt-outline a { min-height: 0; font-size: 14px; font-weight: 400; }
 @media (min-width: 960px) {
   .jt-navbar.with-sidebar .jt-nav-links { border-bottom: 0; }
   .jt-navbar.with-sidebar::after { display: block; content: ''; position: absolute; height: 1px; bottom: 0; left: 272px; right: 0; background: var(--sx-color-border); }

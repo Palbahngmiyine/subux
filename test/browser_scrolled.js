@@ -50,13 +50,22 @@ async (page, { sites = null, colorScheme = 'light', controlled = false, captureT
       const pages = await Promise.all(urls.map(() => context.newPage()));
       try {
         for (const [i, p] of pages.entries()) {
+          p.setDefaultTimeout(30000);
+          p.setDefaultNavigationTimeout(60000);
           await p.bringToFront();
           const response = await p.goto(urls[i]);
           if (!response.ok()) throw new Error(`${urls[i]}: ${response.status()}`);
           await p.locator('h1').waitFor();
           await p.evaluate(() => document.fonts.ready);
           if (i === 1) await p.waitForFunction(() => document.documentElement.dataset.profileReady === 'true');
-          await p.locator('img').evaluateAll(images => Promise.all(images.map(image => image.decode())));
+          // Native lazy images load when scrolled into view. Decoding all of
+          // them before scrolling would wait forever on off-screen images.
+          for (const image of await p.locator('img').all()) {
+            await image.scrollIntoViewIfNeeded();
+            await image.evaluate(image => Promise.race([
+              image.decode(), new Promise((_, reject) => setTimeout(() => reject(new Error('Image decode timed out')), 30000)),
+            ]));
+          }
           for (const video of await p.locator('video').all()) {
             await video.scrollIntoViewIfNeeded();
             // Load through real playback, then rewind. Partial network buffers

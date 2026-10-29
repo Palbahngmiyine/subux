@@ -653,7 +653,8 @@ let init_render_state c _doc =
   C.State.set c rstate
     (Some
        {
-         ids = String_set.empty;
+         ids = String_set.of_list ["main-content"; "footnote-label"; "jt-search-modal";
+           "jt-search-input"; "jt-search-results"; "jt-search-open"; "jt-theme-toggle"];
          toc_rev = [];
          has_mermaid = false;
          footnote_order = [];
@@ -840,7 +841,16 @@ let render_inline c = function
             && Safe_url.is_safe_url ~allow_contact:false ~decode_entities:false
                  encoded_dest
           in
-          C.string c "<img";
+          C.string c "<img loading=\"lazy\" decoding=\"async\"";
+          begin match String.split_on_char 'x' title with
+          | [w; h] ->
+              begin match int_of_string_opt w, int_of_string_opt h with
+              | Some width, Some height when width > 0 && height > 0 ->
+                  C.string c (Printf.sprintf " width=\"%d\" height=\"%d\"" width height)
+              | _ -> ()
+              end
+          | _ -> ()
+          end;
           if is_safe then begin
             C.string c " src=\"";
             C.string c encoded_dest;
@@ -1008,7 +1018,7 @@ let render_block c = function
       true
   | Callout_block { kind; expandable; expanded; title; body } ->
       let kind_str = Domain.callout_kind_to_string kind in
-      C.string c "<blockquote class=\"callout-";
+      C.string c (if expandable then "<details class=\"callout-" else "<blockquote class=\"callout-");
       C.string c kind_str;
       C.string c "\" data-callout=\"";
       C.string c kind_str;
@@ -1016,11 +1026,15 @@ let render_block c = function
       C.string c (if expandable then "true" else "false");
       C.string c "\" data-expanded=\"";
       C.string c (if expanded then "true" else "false");
-      C.string c "\">\n<div class=\"callout-title\"><div class=\"callout-title-text\">";
+      C.byte c '"';
+      if expandable && expanded then C.string c " open";
+      C.string c (if expandable then ">\n<summary class=\"callout-title\"><span class=\"callout-title-text\">"
+        else ">\n<div class=\"callout-title\"><span class=\"callout-title-text\">");
       C.inline c title;
-      C.string c "</div></div>\n<div class=\"callout-content\">";
+      C.string c (if expandable then "</span></summary>\n<div class=\"callout-content\">"
+        else "</span></div>\n<div class=\"callout-content\">");
       List.iter (C.block c) body;
-      C.string c "</div>\n</blockquote>\n";
+      C.string c (if expandable then "</div>\n</details>\n" else "</div>\n</blockquote>\n");
       true
   | Block.Paragraph (p, _) ->
       C.string c "<p>";
@@ -1160,7 +1174,7 @@ let render_block c = function
 
 let render_footnotes c (st : render_state) =
   if st.footnote_order <> [] then begin
-    C.string c "<section data-footnotes class=\"footnotes\"><h2 class=\"sr-only\" id=\"footnote-label\">Footnotes</h2><ol>\n";
+    C.string c "<section data-footnotes class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">각주</h2><ol>\n";
     List.iter
       (fun key ->
         match String_map.find_opt key st.footnotes with
@@ -1222,9 +1236,68 @@ let strip_trailing_newline (s : string) : string =
   let len = String.length s in
   if len > 0 && s.[len - 1] = '\n' then String.sub s 0 (len - 1) else s
 
-let render (md : string) : rendered_markdown =
+let normalize_headings base doc =
+  let base = max 1 (min 6 base) in
+  let rec blocks previous acc = function
+    | [] -> (List.rev acc, previous)
+    | b :: rest ->
+        let b, previous = block previous b in
+        blocks previous (b :: acc) rest
+  and block previous = function
+    | Block.Heading (h, meta) ->
+        let level = min (previous + 1) (max base (Block.Heading.level h)) in
+        (Block.Heading (Block.Heading.make ?id:(Block.Heading.id h)
+           ~level (Block.Heading.inline h), meta), level)
+    | Block.Blocks (bs, meta) ->
+        let bs, previous = blocks previous [] bs in
+        (Block.Blocks (bs, meta), previous)
+    | Block.Block_quote (bq, meta) ->
+        let b, previous = block previous (Block.Block_quote.block bq) in
+        (Block.Block_quote (Block.Block_quote.make b, meta), previous)
+    | Callout_block cb ->
+        let body, previous = blocks previous [] cb.body in
+        (Callout_block { cb with body }, previous)
+    | Block.List (l, meta) ->
+        let items, previous = List.fold_left (fun (acc, previous) (it, imeta) ->
+          let b, previous = block previous (Block.List_item.block it) in
+          let it = Block.List_item.make ?ext_task_marker:(Block.List_item.ext_task_marker it) b in
+          ((it, imeta) :: acc, previous)) ([], previous) (Block.List'.items l) in
+        (Block.List (Block.List'.make ~tight:(Block.List'.tight l)
+          (Block.List'.type' l) (List.rev items), meta), previous)
+    | other -> (other, previous)
+  in
+  let body, _ = block (base - 1) (Doc.block doc) in
+  let defs = Label.Map.map (function
+    | Block.Footnote.Def (fn, meta) ->
+        let contents, _ = block (max 2 base - 1) (Block.Footnote.block fn) in
+        Block.Footnote.Def (Block.Footnote.make ~defined_label:(Block.Footnote.defined_label fn)
+          (Block.Footnote.label fn) contents, meta)
+    | other -> other) (Doc.defs doc) in
+  Doc.make ~nl:(Doc.nl doc) ~defs body
+
+let remove_page_title title doc =
+  let matches h = Block.Heading.level h = 1 &&
+    String.trim (inline_to_plain_string (Block.Heading.inline h)) = String.trim title in
+  let rec leading = function
+    | (Block.Blank_line _ as blank) :: rest -> blank :: leading rest
+    | Block.Heading (h, _) :: rest when matches h -> rest
+    | other -> other
+  in
+  let body = match Doc.block doc with
+    | Block.Blocks (blocks, meta) -> Block.Blocks (leading blocks, meta)
+    | Block.Heading (h, meta) when matches h -> Block.Blocks ([], meta)
+    | block -> block
+  in
+  Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) body
+
+let render ?heading_base ?page_title (md : string) : rendered_markdown =
   let parsed = Doc.of_string ~heading_auto_ids:true ~strict:false md in
   let transformed = transform_doc md parsed in
+  let transformed = match page_title with
+    | None -> transformed | Some title -> remove_page_title title transformed in
+  let transformed = match heading_base with
+    | None -> transformed
+    | Some base -> normalize_headings base transformed in
   let captured_state : render_state option ref = ref None in
   let init_context c d =
     init_render_state c d;

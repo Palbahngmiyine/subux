@@ -209,7 +209,16 @@ let component_css_template area_tone =
   in
   Printf.sprintf
     {|
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+/* Pretendard v1.3.9 hhea: 1950/-494/0 at 2048 UPM.
+   Full-width Korean fallback uses 100%% size-adjust. */
+@font-face {
+  font-family: "Subux Gothic Fallback";
+  src: local("Apple SD Gothic Neo"), local("Malgun Gothic");
+  size-adjust: 100%%;
+  ascent-override: 95.21484375%%;
+  descent-override: 24.12109375%%;
+  line-gap-override: 0%%;
+}
 
 :root {
   --sx-active-fill: %s;
@@ -329,7 +338,8 @@ h4, h5, h6 { font-size: inherit; font-weight: inherit; margin: 0; }
 /* Rule 2 & 3: Inline links are pastel pills (fill + on-primary text) */
 .article-content a:where(:not(sup a):not(.header-anchor)) {
   color: var(--sx-on-active-fill);
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: .15em;
   background-color: var(--sx-active-fill);
   padding: 3px 8px;
   margin: 0;
@@ -579,41 +589,26 @@ blockquote strong { font-style: normal; }
   color: var(--sx-color-text);
 }
 [data-callout] .callout-title {
+  color: var(--sx-color-text);
   font-weight: 600;
   margin-bottom: var(--sx-space-1);
 }
 .callout-note { border-left-color: var(--sx-color-callout-note); }
-.callout-note .callout-title { color: var(--sx-color-callout-note); }
 .callout-tip { border-left-color: var(--sx-color-callout-tip); }
-.callout-tip .callout-title { color: var(--sx-color-callout-tip); }
 .callout-important { border-left-color: var(--sx-color-callout-important); }
-.callout-important .callout-title { color: var(--sx-color-callout-important); }
 .callout-warning { border-left-color: var(--sx-color-callout-warning); }
-.callout-warning .callout-title { color: var(--sx-color-callout-warning); }
 .callout-caution { border-left-color: var(--sx-color-callout-caution); }
-.callout-caution .callout-title { color: var(--sx-color-callout-caution); }
 .callout-abstract, .callout-summary, .callout-tldr { border-left-color: var(--sx-color-callout-tldr); }
-.callout-abstract .callout-title, .callout-summary .callout-title, .callout-tldr .callout-title { color: var(--sx-color-callout-tldr); }
 .callout-info { border-left-color: var(--sx-color-callout-info); }
-.callout-info .callout-title { color: var(--sx-color-callout-info); }
 .callout-todo { border-left-color: var(--sx-color-callout-todo); }
-.callout-todo .callout-title { color: var(--sx-color-callout-todo); }
 .callout-hint { border-left-color: var(--sx-color-callout-hint); }
-.callout-hint .callout-title { color: var(--sx-color-callout-hint); }
 .callout-success, .callout-check, .callout-done { border-left-color: var(--sx-color-callout-success); }
-.callout-success .callout-title, .callout-check .callout-title, .callout-done .callout-title { color: var(--sx-color-callout-success); }
 .callout-question, .callout-help, .callout-faq { border-left-color: var(--sx-color-callout-question); }
-.callout-question .callout-title, .callout-help .callout-title, .callout-faq .callout-title { color: var(--sx-color-callout-question); }
 .callout-failure, .callout-fail, .callout-missing { border-left-color: var(--sx-color-callout-missing); }
-.callout-failure .callout-title, .callout-fail .callout-title, .callout-missing .callout-title { color: var(--sx-color-callout-missing); }
 .callout-danger, .callout-error { border-left-color: var(--sx-color-callout-error); }
-.callout-danger .callout-title, .callout-error .callout-title { color: var(--sx-color-callout-error); }
 .callout-bug { border-left-color: var(--sx-color-callout-bug); }
-.callout-bug .callout-title { color: var(--sx-color-callout-bug); }
 .callout-example { border-left-color: var(--sx-color-callout-example); }
-.callout-example .callout-title { color: var(--sx-color-callout-example); }
 .callout-quote, .callout-cite { border-left-color: var(--sx-color-callout-cite); }
-.callout-quote .callout-title, .callout-cite .callout-title { color: var(--sx-color-callout-cite); }
 
 /* Tables, Code & Syntax Highlighting (COLOR-THEME.md Section 5) */
 .table-wrapper {
@@ -812,7 +807,7 @@ a.jt-nav-link:hover, a.jt-nav-link[aria-current='page'] {
 a.jt-sidebar-link {
   display: flex;
   align-items: center;
-  min-height: 2.25rem;
+  min-height: var(--sx-size-touch-target-min);
   padding: var(--sx-space-1) var(--sx-space-2);
   border-radius: var(--sx-radius-md);
   text-decoration: none;
@@ -844,14 +839,14 @@ a.jt-sidebar-link[aria-current='page'] {
   margin: 0;
   border-left: 1px solid var(--sx-color-border);
 }
-a.toc-link {
+.jt-outline a {
   display: block;
   padding: 4px var(--sx-space-2);
   color: var(--sx-color-text-muted);
   text-decoration: none;
 }
-a.toc-link:hover { color: var(--sx-color-text); }
-a.toc-link-h3 { padding-left: var(--sx-space-3); }
+.jt-outline a:hover { color: var(--sx-color-text); }
+.jt-outline a.toc-link-h3 { padding-left: var(--sx-space-3); }
 
 .jt-doc-footer {
   display: grid;
@@ -938,6 +933,25 @@ a.jt-btn-alt {
   font-size: 0.9375rem;
 }
 
+/* Shared accessibility, media, and documentation controls. */
+.skip-link {
+  position: fixed; top: var(--sx-space-1); left: var(--sx-space-1); z-index: 100;
+  transform: translateY(-200%%); padding: var(--sx-space-2);
+  background: var(--sx-active-fill); color: var(--sx-on-active-fill);
+  border-radius: var(--sx-radius-md);
+}
+.skip-link:focus-visible { transform: translateY(0); }
+[hidden], .jt-search-modal[hidden] { display: none !important; }
+.article-content img { max-width: 100%%; height: auto; border-radius: var(--sx-radius-md); display: block; }
+.article-content .article-video { aspect-ratio: 16 / 9; }
+[data-callout][data-expandable="true"] .callout-title {
+  cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between;
+}
+[data-callout][data-expandable="true"] .callout-title::after {
+  content: "▾"; transition: transform var(--sx-duration-fast) var(--sx-easing-standard);
+}
+details[data-callout]:not([open]) .callout-title::after { transform: rotate(-90deg); }
+details[data-callout]:not([open]) .callout-content { display: none; }
 /* Fence controls are opt-in for themes; the default blog keeps its original layout. */
 .sx-code-block { display: contents; }
 .sx-code-label, .sx-code-copy { display: none; }
@@ -960,7 +974,8 @@ a.jt-btn-alt {
 @media (min-width: 960px) { #jt-sidebar-toggle { visibility: hidden; } }
 
 /* Documentation controls and responsive navigation. */
-.jt-nav-links button, .jt-menu-toggle {
+.jt-theme-toggle::before { content: "◐"; }
+.jt-nav-links button, .jt-menu-toggle, .jt-search-btn, .jt-theme-toggle {
   font: inherit;
   color: var(--sx-color-text-muted);
   background: var(--sx-color-surface-muted);
@@ -1039,6 +1054,10 @@ a.jt-btn-alt {
   .jt-outline { position: sticky; top: 5rem; align-self: start; }
 }
 
+.jt-hero-text { font-size: 1.5rem; }
+.jt-outline a { min-height: var(--sx-size-touch-target-min); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+
 /* 404 Not Found & Empty State */
 .empty-state {
   text-align: center;
@@ -1086,6 +1105,330 @@ a.not-found-link:hover { background-color: var(--sx-active-fill-hover); }
 }
 |}
     active_fill active_hover on_active
+
+let minify_css css =
+  let len = String.length css in
+  let buf = Buffer.create len in
+  let space = function ' ' | '\t' | '\r' | '\n' | '\012' -> true | _ -> false in
+  let tight = function '{' | '}' | ';' | ',' -> true | _ -> false in
+  let rec comment i =
+    if i + 1 >= len then len
+    else if css.[i] = '*' && css.[i + 1] = '/' then i + 2
+    else comment (i + 1)
+  in
+  let rec scan i quote pending previous =
+    if i >= len then Buffer.contents buf
+    else
+      let c = css.[i] in
+      match quote with
+      | Some q ->
+          Buffer.add_char buf c;
+          if c = '\\' && i + 1 < len then begin
+            Buffer.add_char buf css.[i + 1];
+            scan (i + 2) quote false (Some css.[i + 1])
+          end else scan (i + 1) (if c = q then None else quote) false (Some c)
+      | None ->
+          if i + 4 <= len && String.lowercase_ascii (String.sub css i 4) = "url(" then begin
+            if pending && (match previous with None -> false | Some p -> not (tight p || p = ':'))
+            then Buffer.add_char buf ' ';
+            let rec url_end j quote =
+              if j >= len then len
+              else if css.[j] = '\\' then url_end (min len (j + 2)) quote
+              else match quote with
+              | Some q -> url_end (j + 1) (if css.[j] = q then None else quote)
+              | None -> if css.[j] = ')' then j + 1
+                  else url_end (j + 1) (if css.[j] = '\'' || css.[j] = '"' then Some css.[j] else None)
+            in
+            let j = url_end (i + 4) None in
+            Buffer.add_substring buf css i (j - i);
+            scan j None false (Some ')')
+          end else if c = '/' && i + 1 < len && css.[i + 1] = '*' then
+            scan (comment (i + 2)) None pending previous
+          else if space c then scan (i + 1) None true previous
+          else begin
+            if pending && not (tight c)
+               && (match previous with None -> false | Some p -> not (tight p || p = ':'))
+            then Buffer.add_char buf ' ';
+            Buffer.add_char buf c;
+            if c = '\\' && i + 1 < len then begin
+              Buffer.add_char buf css.[i + 1];
+              scan (i + 2) None false (Some css.[i + 1])
+            end else scan (i + 1) (if c = '\'' || c = '"' then Some c else None) false (Some c)
+          end
+  in
+  scan 0 None false None
+
+module Name_set = Set.Make (String)
+
+(* The public theme retains the documented media-query form. The inline
+   bundle can fold the two identical dark declaration lists into light-dark(). *)
+let compact_color_modes css =
+  let rec take_until marker acc = function
+    | [] -> None
+    | line :: rest when line = marker -> Some (List.rev acc, rest)
+    | line :: rest -> take_until marker (line :: acc) rest
+  in
+  let declaration line =
+    let text = String.trim line in
+    match String.index_opt text ':' with
+    | Some i when String.starts_with ~prefix:"--" text && String.ends_with ~suffix:";" text ->
+        Some (String.sub text 0 i,
+          String.trim (String.sub text (i + 1) (String.length text - i - 2)))
+    | Some _ | None -> None
+  in
+  match String.split_on_char '\n' css with
+  | ":root {" :: rest ->
+      begin match take_until "}" [] rest with
+      | Some (light, "" :: "@media (prefers-color-scheme: dark) {" :: "  :root:not([data-theme=\"light\"]) {" :: rest) ->
+          begin match take_until "  }" [] rest with
+          | Some (dark, "}" :: "" :: ":root[data-theme=\"dark\"] {" :: rest) ->
+              begin match take_until "}" [] rest with
+              | Some (explicit_dark, tail) when List.map String.trim dark = List.map String.trim explicit_dark ->
+                  let dark = List.filter_map declaration dark in
+                  let combine value dark_value =
+                    if String.starts_with ~prefix:"#" value && String.starts_with ~prefix:"#" dark_value then
+                      Some ("light-dark(" ^ value ^ "," ^ dark_value ^ ")")
+                    else
+                      match String.rindex_opt value ' ', String.rindex_opt dark_value ' ' with
+                      | Some i, Some j when String.sub value 0 i = String.sub dark_value 0 j ->
+                          let c = String.sub value (i + 1) (String.length value - i - 1) in
+                          let d = String.sub dark_value (j + 1) (String.length dark_value - j - 1) in
+                          if String.starts_with ~prefix:"#" c && String.starts_with ~prefix:"#" d then
+                            Some (String.sub value 0 (i + 1) ^ "light-dark(" ^ c ^ "," ^ d ^ ")")
+                          else None
+                      | _ -> None
+                  in
+                  let converted = List.map (fun line -> match declaration line with
+                    | Some (name, value) ->
+                        begin match List.assoc_opt name dark with
+                        | None -> Some line
+                        | Some d -> Option.map (fun v -> "  " ^ name ^ ": " ^ v ^ ";") (combine value d)
+                        end
+                    | None -> Some line) light in
+                  if List.for_all Option.is_some converted then
+                    String.concat "\n" ([":root {"] @ List.filter_map Fun.id converted @
+                      ["}"; ":root[data-theme=\"light\"] { color-scheme: light; }";
+                       ":root[data-theme=\"dark\"] { color-scheme: dark; }"] @ tail)
+                  else css
+              | _ -> css
+              end
+          | _ -> css
+          end
+      | _ -> css
+      end
+  | _ -> css
+
+let alias_component_values css =
+  let len = String.length css in
+  let rec scan i quote counts =
+    if i >= len then counts
+    else match quote with
+    | Some q ->
+        if css.[i] = '\\' then scan (min len (i + 2)) quote counts
+        else scan (i + 1) (if css.[i] = q then None else quote) counts
+    | None ->
+        if css.[i] = '\'' || css.[i] = '"' then scan (i + 1) (Some css.[i]) counts
+        else if i + 9 < len && String.sub css i 9 = "var(--sx-" then
+          begin match String.index_from_opt css (i + 9) ')' with
+          | Some j ->
+              let name = String.sub css (i + 4) (j - i - 4) in
+              let n = Option.value ~default:0 (List.assoc_opt name counts) in
+              scan (j + 1) None ((name, n + 1) :: List.remove_assoc name counts)
+          | None -> scan (i + 1) None counts
+          end
+        else scan (i + 1) None counts
+  in
+  let counts = scan 0 None [] |> List.sort (fun (a, ac) (b, bc) ->
+    let by_count = Int.compare bc ac in if by_count = 0 then String.compare a b else by_count) in
+  let rec short_name n =
+    let last = String.make 1 (Char.chr (Char.code 'a' + n mod 26)) in
+    if n < 26 then last else short_name (n / 26 - 1) ^ last
+  in
+  let has_declaration name =
+    let needle = name ^ ":" in
+    let rec scan i = i + String.length needle <= len &&
+      (String.sub css i (String.length needle) = needle || scan (i + 1)) in scan 0
+  in
+  let aliases = List.mapi (fun i (name, count) ->
+    let alias = "--sx-" ^ short_name i in
+    if (String.length name - String.length alias) * count > String.length name + String.length alias + 8
+       && not (has_declaration alias) && not (String.contains name ',') then Some (name, alias) else None) counts
+    |> List.filter_map Fun.id in
+  let buf = Buffer.create len in
+  let rec write i quote =
+    if i >= len then ()
+    else match quote with
+    | Some q ->
+        Buffer.add_char buf css.[i];
+        if css.[i] = '\\' && i + 1 < len then begin
+          Buffer.add_char buf css.[i + 1]; write (i + 2) quote
+        end else write (i + 1) (if css.[i] = q then None else quote)
+    | None ->
+        if css.[i] = '\'' || css.[i] = '"' then begin
+          Buffer.add_char buf css.[i]; write (i + 1) (Some css.[i])
+        end else if i + 9 < len && String.sub css i 9 = "var(--sx-" then
+          begin match String.index_from_opt css (i + 9) ')' with
+          | Some j ->
+              let name = String.sub css (i + 4) (j - i - 4) in
+              Buffer.add_string buf ("var(" ^ Option.value ~default:name (List.assoc_opt name aliases) ^ ")");
+              write (j + 1) None
+          | None -> Buffer.add_char buf css.[i]; write (i + 1) None
+          end
+        else begin Buffer.add_char buf css.[i]; write (i + 1) None end
+  in
+  write 0 None;
+  (* Appended aliases retain the public token values and their theme cascade. *)
+  Buffer.add_string buf ":root{";
+  List.iter (fun (name, alias) -> Buffer.add_string buf (alias ^ ":var(" ^ name ^ ");")) aliases;
+  Buffer.add_char buf '}';
+  Buffer.contents buf
+
+let inline_stylesheet css =
+  let css = compact_color_modes css in
+  let references text =
+    let len = String.length text in
+    let rec scan i names =
+      if i + 6 > len then names
+      else if String.sub text i 6 = "var(--" then
+        let rec finish j = if j < len &&
+          (match text.[j] with 'a'..'z' | 'A'..'Z' | '0'..'9' | '-' | '_' -> true | _ -> false)
+          then finish (j + 1) else j in
+        let j = finish (i + 4) in
+        scan j (Name_set.add (String.sub text (i + 4) (j - i - 4)) names)
+      else scan (i + 1) names
+    in scan 0 Name_set.empty
+  in
+  let declaration line =
+    let text = String.trim line in
+    if String.starts_with ~prefix:"--" text then
+      match String.index_opt text ':' with
+      | Some i -> Some (String.sub text 0 i)
+      | None -> None
+    else None
+  in
+  let lines = String.split_on_char '\n' css in
+  let roots = List.fold_left (fun names line -> match declaration line with
+    | Some _ -> names | None -> Name_set.union names (references line)) Name_set.empty lines in
+  let rec reachable names =
+    let expanded = List.fold_left (fun acc line -> match declaration line with
+      | Some name when Name_set.mem name names -> Name_set.union acc (references line)
+      | Some _ | None -> acc) names lines in
+    if Name_set.equal names expanded then names else reachable expanded
+  in
+  let used = reachable roots in
+  lines |> List.filter (fun line -> match declaration line with
+    | Some name -> Name_set.mem name used | None -> true)
+  |> String.concat "\n" |> minify_css |> alias_component_values
+
+let critical_stylesheet ~html css =
+  let contains text part =
+    let n = String.length part in
+    let rec scan i = i + n <= String.length text &&
+      (String.sub text i n = part || scan (i + 1)) in
+    scan 0
+  in
+  let ident = function 'a'..'z' | 'A'..'Z' | '0'..'9' | '_' | '-' -> true | _ -> false in
+  let classes =
+    let rec scan i names =
+      if i + 7 > String.length html then names
+      else if String.sub html i 7 = "class=\"" then
+        match String.index_from_opt html (i + 7) '"' with
+        | None -> names
+        | Some j ->
+            let names = String.sub html (i + 7) (j - i - 7) |> String.split_on_char ' '
+              |> List.fold_left (fun names name -> Name_set.add name names) names in
+            scan (j + 1) names
+      else scan (i + 1) names
+    in scan 0 (List.fold_left (fun s c -> Name_set.add c s) Name_set.empty
+      ["jt-sidebar-link"; "mermaid"])
+  in
+  let selector_used selector =
+    let n = String.length selector in
+    let rec skip_parens i depth =
+      if i >= n then n else match selector.[i] with
+      | '(' -> skip_parens (i + 1) (depth + 1)
+      | ')' -> if depth = 1 then i + 1 else skip_parens (i + 1) (depth - 1)
+      | _ -> skip_parens (i + 1) depth
+    in
+    let rec scan i =
+      if i >= n then true
+      else if selector.[i] = ':' then
+        let rec finish j = if j < n && ident selector.[j] then finish (j + 1) else j in
+        let j = finish (i + 1) in
+        if j < n && selector.[j] = '(' then scan (skip_parens j 0) else scan j
+      else if selector.[i] = '.' then
+        let rec finish j = if j < n && ident selector.[j] then finish (j + 1) else j in
+        let j = finish (i + 1) in
+        Name_set.mem (String.sub selector (i + 1) (j - i - 1)) classes && scan j
+      else if selector.[i] = '[' then
+        begin match String.index_from_opt selector (i + 1) ']' with
+        | None -> true
+        | Some j ->
+            let attr = String.sub selector (i + 1) (j - i - 1) in
+            let name = match String.index_opt attr '=' with Some k -> String.sub attr 0 k | None -> attr in
+            (name = "hidden" || name = "data-theme" || contains html (name ^ "=") || contains html (name ^ ">")) && scan (j + 1)
+        end
+      else if (selector.[i] >= 'a' && selector.[i] <= 'z') &&
+              (i = 0 || selector.[i - 1] = ' ' || selector.[i - 1] = '>') then
+        let rec finish j = if j < n && ident selector.[j] then finish (j + 1) else j in
+        let j = finish (i + 1) in
+        let tag = String.sub selector i (j - i) in
+        (tag = "html" || tag = "body" || contains html ("<" ^ tag ^ " ") || contains html ("<" ^ tag ^ ">")) && scan j
+      else scan (i + 1)
+    in scan 0
+  in
+  let css = minify_css (compact_color_modes css) in
+  let len = String.length css in
+  let rec closing i depth quote =
+    if i >= len then len
+    else match quote with
+    | Some q -> if css.[i] = '\\' then closing (i + 2) depth quote
+        else closing (i + 1) depth (if css.[i] = q then None else quote)
+    | None -> match css.[i] with
+      | '\'' | '"' as q -> closing (i + 1) depth (Some q)
+      | '{' -> closing (i + 1) (depth + 1) None
+      | '}' -> if depth = 1 then i else closing (i + 1) (depth - 1) None
+      | _ -> closing (i + 1) depth None
+  in
+  let rec rules start finish =
+    if start >= finish then ""
+    else match String.index_from_opt css start '{' with
+    | None -> String.sub css start (finish - start)
+    | Some open_at when open_at < finish ->
+        let close_at = closing (open_at + 1) 1 None in
+        if close_at >= finish then String.sub css start (finish - start)
+        else
+          let selector = String.sub css start (open_at - start) in
+          let media = String.starts_with ~prefix:"@media" selector in
+          let keep = media || String.starts_with ~prefix:"@font-face" selector ||
+            List.exists selector_used (String.split_on_char ',' selector) in
+          let body = if not keep then "" else if media then rules (open_at + 1) close_at
+            else String.sub css (open_at + 1) (close_at - open_at - 1) in
+          let current = if keep && body <> "" then selector ^ "{" ^ body ^ "}" else "" in
+          current ^ rules (close_at + 1) finish
+    | Some _ -> String.sub css start (finish - start)
+  in
+  (* Filter the original formatted sheet before variable reachability and theme
+     folding. A fresh line per declaration preserves the inline compiler input. *)
+  let filtered = rules 0 len in
+  let formatted = Buffer.create (String.length filtered) in
+  let rec format i quote =
+    if i >= String.length filtered then () else
+    let c = filtered.[i] in
+    Buffer.add_char formatted c;
+    match quote with
+    | Some q ->
+        if c = '\\' && i + 1 < String.length filtered then begin
+          Buffer.add_char formatted filtered.[i + 1]; format (i + 2) quote
+        end else format (i + 1) (if c = q then None else quote)
+    | None ->
+        if c = '{' || c = '}' || c = ';' then Buffer.add_char formatted '\n';
+        format (i + 1) (if c = '\'' || c = '"' then Some c else None)
+  in
+  format 0 None;
+  (* Color-mode folding uses the original generated prelude, so first fold it
+     before rule selection and retain the already-folded formatted declarations. *)
+  inline_stylesheet (Buffer.contents formatted)
 
 let compile_full_stylesheet ?(prefix = "sx") ?(area_tone = Primary_tone)
     json_str =
