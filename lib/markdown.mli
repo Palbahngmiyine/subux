@@ -8,4 +8,7 @@ type rendered_markdown = {
   has_mermaid : bool;
 }
 
-val render : string -> rendered_markdown
+(** Without [heading_base], preserve the source heading levels. Site templates
+    use [heading_base:2] beneath their own page title, which also normalizes
+    forward level jumps. *)
+val render : ?heading_base:int -> string -> rendered_markdown
