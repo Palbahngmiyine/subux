@@ -36,6 +36,11 @@ stay inside the input directory, including after resolving symlinks. JavaScript
 executes as trusted site code. Resource URLs inside CSS retain their original
 values, so referenced resources must be available at those URLs.
 
+OCaml callers constructing `Domain.site_config` directly must add `custom_css`
+and `custom_js` (`string option`, normally `None`). These fields contain trusted
+file contents, not paths; the CLI performs file loading outside the pure library.
+Callers using the supplied defaults inherit `None` for both fields.
+
 Keep site-specific color and font changes in the CSS profile's `--sx-*` custom
 properties. Navigation, sidebar and search settings belong in `subux.json`.
 Both examples disable search to match their originals; the default is enabled.
