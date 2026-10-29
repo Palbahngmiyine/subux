@@ -153,6 +153,15 @@ let test_frontmatter () =
   | Error _ -> ()
   end;
 
+  List.iter (fun title ->
+    match Frontmatter.parse ("---\ntitle: " ^ title ^ " # comment\n---\nBody") with
+    | Error e -> fail ("plain scalar: " ^ error_to_string e)
+    | Ok doc -> assert_true (doc.meta.title = Some title) "plain title and comment")
+    [ "Rob Pike's 5 Rules of Programming"; "A [plain] title" ];
+  List.iter (fun value ->
+    match Frontmatter.parse ("---\ntitle: " ^ value ^ "\n---\n") with
+    | Ok _ -> fail "malformed or unsafe title accepted"
+    | Error _ -> ()) [ "'unclosed"; "\"unclosed"; "[one, two"; "Name &anchor" ];
   print_endline "PASS: Frontmatter security and parsing tests"
 
 (* ==========================================================================
@@ -227,6 +236,12 @@ let test_markdown_rendering () =
   assert_contains html_gfm "<input type=\"checkbox\" checked disabled>"
     "2.5 task list checkbox";
   assert_contains html_gfm "<del>Removed</del>" "2.5 strikethrough";
+  let table_pipes = render_html
+      "| Expression |\n| --- |\n| **`a \\|\\| <b>`** |\n\nOutside: `a \\| b`" in
+  assert_contains table_pipes "<strong><code>a || &lt;b&gt;</code></strong>"
+    "2.5 table code unescapes delimiter pipes and preserves escaping";
+  assert_contains table_pipes "<code>a \\| b</code>"
+    "2.5 code outside tables keeps literal backslashes";
 
   (* 2.6 syntax highlighting preserves aliases and leaves text and Mermaid fences untouched *)
   let html_code =
@@ -243,6 +258,12 @@ let test_markdown_rendering () =
     "2.6 text fence untouched";
   assert_contains html_code "<code class=\"language-mermaid\">graph LR; A --> B"
     "2.6 mermaid fence untouched";
+  assert_contains html_code "class=\"sx-code-block\"" "2.6 themeable code wrapper";
+  assert_contains html_code "class=\"sx-code-copy\" aria-label=\"Copy code\""
+    "2.6 accessible copy control";
+  let hostile_fence = render_html "```x\"<img\n<script>alert(1)</script>\n```" in
+  assert_not_contains hostile_fence "<img" "2.6 language label escaped";
+  assert_not_contains hostile_fence "<script>" "2.6 code text escaped";
 
   (* 2.7 footnotes retain target links and plain-text hover content inside callouts *)
   let html_fn =
@@ -255,6 +276,29 @@ let test_markdown_rendering () =
   assert_contains html_fn "id=\"user-content-fn-1\"" "2.7 footnote target id";
   assert_contains html_fn "href=\"#user-content-fnref-1\""
     "2.7 footnote backref";
+  assert_contains html_fn "id=\"footnote-label\">Footnotes</h2>"
+    "2.7 accessible footnote heading";
+  assert_contains html_fn "aria-describedby=\"footnote-label\""
+    "2.7 reference described by footnote heading";
+  assert_contains html_fn "↩</a></p>" "2.7 backlink stays in the note paragraph";
+
+  let repeated_fn =
+    render_html "First[^note] then[^note] and last[^note].\n\n[^note]: [Unsafe](javascript:alert(1))."
+  in
+  List.iter
+    (fun suffix ->
+      assert_contains repeated_fn ("id=\"user-content-fnref-note" ^ suffix ^ "\"")
+        "2.7 repeated reference has a unique target";
+      assert_contains repeated_fn ("href=\"#user-content-fnref-note" ^ suffix ^ "\"")
+        "2.7 every reference has a backlink")
+    [ ""; "-2"; "-3" ];
+  assert_contains repeated_fn "aria-label=\"Back to reference 1-2\">↩<sup>2</sup></a>"
+    "2.7 repeated backlink identifies its reference";
+  assert_contains repeated_fn "↩<sup>3</sup></a></p>"
+    "2.7 all backlinks stay in the final paragraph";
+  assert_not_contains repeated_fn "#user-content-fnref-note-4"
+    "2.7 no backlink to a nonexistent reference";
+  assert_not_contains repeated_fn "javascript:" "2.7 repeated note keeps URL sanitization";
 
   print_endline
     "PASS: Markdown rendering tests"
@@ -490,12 +534,104 @@ let test_color_tokens_and_site_builder () =
       assert_contains doc1_art.content "Next page" "4.3 auto next page pager"
   end;
 
+  (* A site override must be emitted as a separate stylesheet after the theme,
+     for every mode; CSS content must never be interpolated into HTML. *)
+  List.iter (fun mode ->
+    let css = "/* </style><script> */ .jt-hero { max-width: 60rem; }" in
+    let config = { default_docs_config with mode; custom_css = Some css; custom_js = Some "/* </script> */" } in
+    match Site_builder.compile_site ~config ~tokens_json [] with
+    | Error e -> fail ("custom stylesheet: " ^ error_to_string e)
+    | Ok plan ->
+        let custom = List.find_opt (fun (a : Site_builder.output_artifact) ->
+          a.out_path = "assets/custom.css") plan.artifacts in
+        assert_true (Option.map (fun (a : Site_builder.output_artifact) -> a.content) custom = Some css)
+          "custom CSS emitted unchanged";
+        assert_true (List.exists (fun (a : Site_builder.output_artifact) ->
+          a.out_path = "assets/custom.js" && a.content = "/* </script> */") plan.artifacts)
+          "custom module emitted unchanged";
+        List.iter (fun (a : Site_builder.output_artifact) ->
+          if Filename.check_suffix a.out_path ".html" then begin
+            assert_contains a.content "/assets/custom.css" "custom CSS linked";
+            assert_contains a.content "src=\"/assets/custom.js\"" "custom module linked";
+            assert_not_contains a.content "/* </script> */" "custom module outside HTML";
+            assert_not_contains a.content "<script> */" "custom CSS outside HTML"
+          end) plan.artifacts)
+    [ Blog_mode; Docs_mode; Unified_mode ];
   print_endline
     "PASS: Design tokens & Site_builder (Blog_mode + Docs_mode) tests"
+
+(* Exercise CLI I/O boundaries with real files and a bounded child process.
+   In particular a FIFO must be rejected before opening it for reading. *)
+let test_cli_assets () =
+  let cli = Unix.realpath "../bin/main.exe" in
+  let input = Filename.temp_file "subux-assets-" "" in
+  Sys.remove input;
+  Unix.mkdir input 0o700;
+  let outside = Filename.temp_file "subux-outside-" ".css" in
+  let path name = Filename.concat input name in
+  let write name content =
+    Out_channel.with_open_bin (path name) (fun ch -> Out_channel.output_string ch content)
+  in
+  let cleanup () =
+    List.iter (fun name -> try Sys.remove (path name) with Sys_error _ -> ())
+      [ "subux.json"; "post.md"; "site.css"; "site.js"; "internal.css";
+        "external.css"; "blocked.pipe"; "output.log" ];
+    Sys.remove outside;
+    Unix.rmdir input
+  in
+  let results = Fun.protect ~finally:cleanup (fun () ->
+    write "post.md" "# Asset fixture\n";
+    write "site.css" "/* regular stylesheet */";
+    write "site.js" "/* regular module */";
+    let run key value expected label =
+      write "subux.json" (Json_parser.to_string (Json_parser.Object [ key, value ]));
+      let output = Unix.openfile (path "output.log") [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+      let pid = Unix.create_process cli
+          [| cli; "check"; "-i"; input; "--tokens"; "../design/tokens.json" |]
+          Unix.stdin output output in
+      Unix.close output;
+      let rec wait remaining =
+        let finished, status = Unix.waitpid [ Unix.WNOHANG ] pid in
+        if finished <> 0 then Some status
+        else if remaining = 0 then begin
+          Unix.kill pid Sys.sigkill;
+          ignore (Unix.waitpid [] pid);
+          None
+        end else begin
+          ignore (Unix.select [] [] [] 0.01);
+          wait (remaining - 1)
+        end
+      in
+      let status = wait 200 in
+      let log = In_channel.with_open_bin (path "output.log") In_channel.input_all in
+      (label, key, status, log, expected)
+    in
+    let posix = Sys.os_type <> "Win32" in
+    if posix then begin
+      Unix.symlink (path "site.css") (path "internal.css");
+      Unix.symlink outside (path "external.css");
+      Unix.mkfifo (path "blocked.pipe") 0o600
+    end;
+    List.concat_map (fun key ->
+      [ run key (Json_parser.String (if key = "customCss" then "site.css" else "site.js")) 0 "regular asset";
+        run key (Json_parser.Bool true) 1 "invalid asset type";
+        run key (Json_parser.String "../outside.css") 1 "asset traversal";
+        run key (Json_parser.String outside) 1 "absolute asset path" ]
+      @ if posix then
+          [ run key (Json_parser.String "internal.css") 0 "internal asset symlink";
+            run key (Json_parser.String "external.css") 1 "external asset symlink";
+            run key (Json_parser.String "blocked.pipe") 1 "FIFO asset must not block" ]
+        else []) [ "customCss"; "customJs" ])
+  in
+  List.iter (fun (label, key, status, log, expected) ->
+    assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
+    if expected <> 0 then assert_contains log key (label ^ " identifies the asset field")) results;
+  print_endline "PASS: CLI custom asset boundary tests"
 
 let () =
   test_frontmatter ();
   test_markdown_rendering ();
   test_safe_urls ();
   test_color_tokens_and_site_builder ();
+  test_cli_assets ();
   print_endline "\nALL TESTS PASSED!"

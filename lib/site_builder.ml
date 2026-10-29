@@ -205,7 +205,14 @@ let common_head ~(page_title : string) ~(description : string)
     Html.void "link"
       ~attrs:[ ("rel", "stylesheet"); ("href", "/assets/subux-theme.css") ]
       ();
-  ]
+  ] @ (match config.custom_css with
+      | None -> []
+      | Some _ -> [ Html.void "link"
+          ~attrs:[ ("rel", "stylesheet"); ("href", "/assets/custom.css") ] () ])
+    @ (match config.custom_js with
+       | None -> []
+       | Some _ -> [ Html.el "script"
+           ~attrs:[ ("type", "module"); ("src", "/assets/custom.js") ] [] ])
 
 let mermaid_runtime_script : Html.node =
   Html.el "script"
@@ -545,77 +552,189 @@ let render_not_found ~(config : site_config) : string =
 
 (* 2. Docs_mode Navbar, Search Modal, Home & Documentation Page Renderers *)
 let jt_runtime_script : Html.node =
-  Html.el "script"
-    [
-      Html.raw
-        "(function(){\n\
-           const root = document.documentElement;\n\
-           const saved = localStorage.getItem('sx-theme');\n\
-           if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);\n\
-           const themeBtn = document.getElementById('jt-theme-toggle');\n\
-           if (themeBtn) {\n\
-             themeBtn.addEventListener('click', () => {\n\
-               const cur = root.getAttribute('data-theme');\n\
-               const next = cur === 'dark' ? 'light' : 'dark';\n\
-               root.setAttribute('data-theme', next);\n\
-               localStorage.setItem('sx-theme', next);\n\
-             });\n\
-           }\n\
-           const modal = document.getElementById('jt-search-modal');\n\
-           const openBtn = document.getElementById('jt-search-open');\n\
-           const input = document.getElementById('jt-search-input');\n\
-           const results = document.getElementById('jt-search-results');\n\
-           let indexData = null;\n\
-           async function openSearch() {\n\
-             if (!modal) return;\n\
-             modal.hidden = false;\n\
-             if (input) input.focus();\n\
-             if (!indexData) {\n\
-               try {\n\
-                 const res = await fetch('/search-index.json');\n\
-                 indexData = await res.json();\n\
-               } catch { indexData = []; }\n\
-             }\n\
-           }\n\
-           function closeSearch() { if (modal) modal.hidden = true; }\n\
-           if (openBtn) openBtn.addEventListener('click', openSearch);\n\
-           window.addEventListener('keydown', (e) => {\n\
-             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {\n\
-               e.preventDefault();\n\
-               if (modal && !modal.hidden) closeSearch(); else openSearch();\n\
-             } else if (e.key === 'Escape') closeSearch();\n\
-           });\n\
-           if (modal) {\n\
-             modal.addEventListener('click', (e) => { if (e.target === modal) closeSearch(); });\n\
-           }\n\
-           if (input && results) {\n\
-             input.addEventListener('input', () => {\n\
-               const q = input.value.trim().toLowerCase();\n\
-               results.replaceChildren();\n\
-               if (!q || !Array.isArray(indexData)) return;\n\
-               indexData.filter(it =>\n\
-                 (it.title && it.title.toLowerCase().includes(q)) ||\n\
-                 (it.text && it.text.toLowerCase().includes(q))\n\
-               ).slice(0, 8).forEach(it => {\n\
-                 const li = document.createElement('li');\n\
-                 const a = document.createElement('a');\n\
-                 a.href = it.href;\n\
-                 a.className = 'jt-sidebar-link';\n\
-                 a.textContent = it.title;\n\
-                 li.appendChild(a);\n\
-                 results.appendChild(li);\n\
-               });\n\
-             });\n\
-           }\n\
-         })();";
-    ]
+  Html.el "script" [ Html.raw {|(function () {
+  const root = document.documentElement;
+  let saved;
+  try { saved = localStorage.getItem('sx-theme'); } catch {}
+  if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
+  const themeButton = document.getElementById('jt-theme-toggle');
+  const systemTheme = matchMedia('(prefers-color-scheme: dark)');
+  const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : systemTheme.matches;
+  function updateThemeButton() {
+    if (themeButton) themeButton.setAttribute('aria-checked', String(isDark()));
+  }
+  updateThemeButton();
+  systemTheme.addEventListener('change', updateThemeButton);
+  if (themeButton) themeButton.addEventListener('click', () => {
+    root.dataset.theme = isDark() ? 'light' : 'dark';
+    try { localStorage.setItem('sx-theme', root.dataset.theme); } catch {}
+    updateThemeButton();
+  });
+  const menu = document.getElementById('jt-main-nav');
+  const menuButton = document.getElementById('jt-menu-toggle');
+  if (menu && menuButton) {
+    menu.dataset.ready = 'true';
+    menuButton.addEventListener('click', () => {
+      const open = menuButton.getAttribute('aria-expanded') !== 'true';
+      menuButton.setAttribute('aria-expanded', String(open));
+      menu.dataset.open = String(open);
+      document.body.style.overflow = open ? 'hidden' : '';
+    });
+    matchMedia('(min-width: 960px)').addEventListener('change', () => {
+      menu.dataset.open = 'false';
+      menuButton.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    });
+  }
+  const sidebar = document.getElementById('jt-sidebar');
+  const sidebarButton = document.getElementById('jt-sidebar-toggle');
+  const backdrop = document.getElementById('jt-sidebar-backdrop');
+  const outline = document.getElementById('jt-outline');
+  const outlineButton = document.getElementById('jt-outline-toggle');
+  function closeSidebar(restoreFocus = true) {
+    if (!sidebar || sidebar.dataset.open !== 'true') return;
+    sidebar.dataset.open = 'false';
+    sidebarButton.setAttribute('aria-expanded', 'false');
+    backdrop.hidden = true;
+    document.body.style.overflow = '';
+    if (restoreFocus) sidebarButton.focus();
+  }
+  if (sidebar && sidebarButton && backdrop) {
+    sidebar.dataset.ready = 'true';
+    sidebarButton.addEventListener('click', () => {
+      sidebar.dataset.open = 'true';
+      sidebarButton.setAttribute('aria-expanded', 'true');
+      backdrop.hidden = false;
+      document.body.style.overflow = 'hidden';
+      const link = sidebar.querySelector('a');
+      if (link) link.focus();
+    });
+    backdrop.addEventListener('click', closeSidebar);
+    matchMedia('(min-width: 960px)').addEventListener('change', () => closeSidebar(false));
+  }
+  if (outline && outlineButton) {
+    outline.dataset.ready = 'true';
+    outlineButton.addEventListener('click', () => {
+      const open = outline.dataset.open !== 'true';
+      outline.dataset.open = String(open);
+      outlineButton.setAttribute('aria-expanded', String(open));
+    });
+    outline.addEventListener('click', event => {
+      if (event.target.closest('a')) {
+        outline.dataset.open = 'false';
+        outlineButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('click', event => {
+      if (!outline.contains(event.target) && !outlineButton.contains(event.target)) {
+        outline.dataset.open = 'false';
+        outlineButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+  document.querySelectorAll('.sx-code-copy').forEach(button => {
+    let resetCopy;
+    button.addEventListener('click', async () => {
+      const code = button.parentElement.querySelector('pre code');
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        button.setAttribute('aria-label', 'Copied');
+        button.dataset.copied = 'true';
+        clearTimeout(resetCopy);
+        resetCopy = setTimeout(() => {
+          delete button.dataset.copied;
+          button.setAttribute('aria-label', 'Copy code');
+        }, 2000);
+      }
+      catch { button.setAttribute('aria-label', 'Copy failed'); }
+    });
+  });
+  const modal = document.getElementById('jt-search-modal');
+  const openButton = document.getElementById('jt-search-open');
+  const input = document.getElementById('jt-search-input');
+  const results = document.getElementById('jt-search-results');
+  let indexData = null;
+  let previousFocus = null;
+  function renderResults() {
+    if (!input || !results) return;
+    results.replaceChildren();
+    const query = input.value.trim().toLowerCase();
+    if (!query || !Array.isArray(indexData)) return;
+    indexData.filter(item => (item.title || '').toLowerCase().includes(query) ||
+      (item.text || '').toLowerCase().includes(query)).slice(0, 8).forEach(item => {
+        const li = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = item.href;
+        link.className = 'jt-sidebar-link';
+        link.textContent = item.title;
+        li.append(link);
+        results.append(li);
+      });
+  }
+  async function openSearch() {
+    if (!modal || !modal.hidden) return;
+    previousFocus = document.activeElement;
+    modal.hidden = false;
+    if (input) input.focus();
+    if (!indexData) {
+      try { const response = await fetch('/search-index.json'); indexData = await response.json(); }
+      catch { indexData = []; }
+    }
+    renderResults();
+  }
+  function closeSearch() {
+    if (!modal || modal.hidden) return;
+    modal.hidden = true;
+    if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+  }
+  if (openButton) openButton.addEventListener('click', openSearch);
+  if (input) input.addEventListener('input', renderResults);
+  if (modal) modal.addEventListener('click', event => { if (event.target === modal) closeSearch(); });
+  window.addEventListener('keydown', event => {
+    if (modal && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (modal.hidden) openSearch(); else closeSearch();
+    } else if (event.key === 'Escape') {
+      closeSidebar();
+      if (outline && outlineButton) { outline.dataset.open = 'false'; outlineButton.setAttribute('aria-expanded', 'false'); }
+      const searchWasOpen = modal && !modal.hidden;
+      closeSearch();
+      if (!searchWasOpen && menu && menuButton && menu.dataset.open === 'true') {
+        menu.dataset.open = 'false';
+        menuButton.setAttribute('aria-expanded', 'false');
+        document.body.style.overflow = '';
+        menuButton.focus();
+      }
+    } else if (event.key === 'Tab') {
+      const activePanel = modal && !modal.hidden ? modal : sidebar && sidebar.dataset.open === 'true' ? sidebar : null;
+      if (!activePanel) return;
+      const focusable = Array.from(activePanel.querySelectorAll('input, a[href], button')).filter(el => el.getClientRects().length);
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+})();|} ]
 
-let render_jt_navbar (config : site_config) : Html.node =
+let normalize_href_for_match (href : string) : string =
+  let s = String.trim href in
+  let len = String.length s in
+  if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1)
+  else if String.ends_with ~suffix:".md" s then
+    String.sub s 0 (len - 3)
+  else s
+
+
+let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site_config) : Html.node =
   let nav_links =
     List.map
       (fun (item : nav_item) ->
         Html.el "a"
-          ~attrs:[ ("href", item.link); ("class", "jt-nav-link") ]
+          ~attrs:([ ("href", item.link); ("class", "jt-nav-link") ]
+            @ if normalize_href_for_match item.link = normalize_href_for_match current_href
+              then [ ("aria-current", "page") ] else [])
           [ Html.txt item.text ])
       config.nav
   in
@@ -639,9 +758,13 @@ let render_jt_navbar (config : site_config) : Html.node =
           ("type", "button");
           ("id", "jt-theme-toggle");
           ("class", "jt-theme-toggle");
+          ("role", "switch");
+          ("aria-checked", "false");
           ("aria-label", "Toggle color theme");
         ]
-      [ Html.txt "◐" ]
+      [ Html.el "span" ~attrs:[ ("class", "jt-theme-check"); ("aria-hidden", "true") ]
+          [ Html.el "span" ~attrs:[ ("class", "jt-theme-sun") ] [];
+            Html.el "span" ~attrs:[ ("class", "jt-theme-moon") ] [] ] ]
   in
   let github_node =
     match config.github_url with
@@ -662,17 +785,28 @@ let render_jt_navbar (config : site_config) : Html.node =
           ]
   in
   Html.el "header"
-    ~attrs:[ ("class", "jt-navbar") ]
+    ~attrs:[ ("class", if has_sidebar then "jt-navbar with-sidebar" else "jt-navbar") ]
     [
       Html.el "div"
         ~attrs:[ ("class", "jt-navbar-inner") ]
         [
           Html.el "a"
             ~attrs:[ ("href", "/"); ("class", "jt-brand") ]
-            [ Html.txt config.title ];
+            [ Html.el "span" [ Html.txt config.title ] ];
+          Html.el "button"
+            ~attrs:[ ("type", "button"); ("id", "jt-menu-toggle");
+                     ("class", "jt-menu-toggle"); ("aria-label", "Toggle navigation");
+                     ("aria-controls", "jt-main-nav"); ("aria-expanded", "false") ]
+            [ Html.el "span" ~attrs:[ ("class", "jt-menu-icon"); ("aria-hidden", "true") ]
+                [ Html.el "span" ~attrs:[ ("class", "top") ] [];
+                  Html.el "span" ~attrs:[ ("class", "middle") ] [];
+                  Html.el "span" ~attrs:[ ("class", "bottom") ] [] ] ];
           Html.el "nav"
-            ~attrs:[ ("class", "jt-nav-links"); ("aria-label", "Main Navigation") ]
-            (nav_links @ [ search_btn; theme_btn; github_node ]);
+            ~attrs:[ ("id", "jt-main-nav"); ("class", "jt-nav-links"); ("aria-label", "Main Navigation") ]
+            (nav_links @ [ search_btn;
+              Html.el "div" ~attrs:[ ("class", "jt-appearance") ]
+                [ Html.el "span" ~attrs:[ ("class", "jt-appearance-label") ] [ Html.txt "Appearance" ]; theme_btn ];
+              github_node ]);
         ];
     ]
 
@@ -710,13 +844,6 @@ let render_jt_search_modal (config : site_config) : Html.node =
           ];
       ]
 
-let normalize_href_for_match (href : string) : string =
-  let s = String.trim href in
-  let len = String.length s in
-  if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1)
-  else if String.ends_with ~suffix:".md" s then
-    String.sub s 0 (len - 3)
-  else s
 
 let effective_sidebar_groups (config : site_config)
     (all_docs : parsed_entry list) : sidebar_group list =
@@ -883,7 +1010,7 @@ let render_docs_page ~(config : site_config)
   let groups = effective_sidebar_groups config all_docs in
   let sidebar_node =
     Html.el "aside"
-      ~attrs:[ ("class", "jt-sidebar"); ("aria-label", "Sidebar Navigation") ]
+      ~attrs:[ ("id", "jt-sidebar"); ("class", "jt-sidebar"); ("aria-label", "Sidebar Navigation") ]
       (List.map
          (fun (g : sidebar_group) ->
            Html.el "div"
@@ -918,12 +1045,14 @@ let render_docs_page ~(config : site_config)
   let outline_node =
     if entry.rendered.toc = [] then
       Html.el "aside"
-        ~attrs:[ ("class", "jt-outline"); ("aria-label", "On this page") ]
+        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline"); ("aria-label", "On this page") ]
         []
     else
       Html.el "aside"
-        ~attrs:[ ("class", "jt-outline"); ("aria-label", "On this page") ]
+        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline"); ("aria-label", "On this page") ]
         [
+          Html.el "a" ~attrs:[ ("class", "jt-outline-top"); ("href", "#") ]
+            [ Html.txt "Return to top" ];
           Html.el "p"
             ~attrs:[ ("class", "jt-outline-title") ]
             [ Html.txt "On this page" ];
@@ -995,7 +1124,22 @@ let render_docs_page ~(config : site_config)
   in
   let body =
     [
-      render_jt_navbar config;
+      render_jt_navbar ~current_href ~has_sidebar:true config;
+      Html.el "div" ~attrs:[ ("class", "jt-local-nav") ]
+        [ Html.el "button"
+            ~attrs:[ ("type", "button"); ("id", "jt-sidebar-toggle");
+                     ("aria-controls", "jt-sidebar"); ("aria-expanded", "false") ]
+            [ Html.el "span" ~attrs:[ ("class", "jt-local-menu-icon"); ("aria-hidden", "true") ] [];
+              Html.txt "Menu" ];
+          Html.el "button"
+            ~attrs:[ ("type", "button"); ("id", "jt-outline-toggle");
+                     ("aria-controls", "jt-outline"); ("aria-expanded", "false") ]
+            [ Html.txt "On this page";
+              Html.el "span" ~attrs:[ ("class", "jt-local-chevron"); ("aria-hidden", "true") ] [] ] ];
+      Html.el "button"
+        ~attrs:[ ("type", "button"); ("id", "jt-sidebar-backdrop");
+                 ("class", "jt-sidebar-backdrop"); ("aria-label", "Close document navigation");
+                 ("hidden", "hidden") ] [];
       Html.el "div"
         ~attrs:[ ("class", "jt-doc-layout") ]
         [
@@ -1223,4 +1367,12 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
       };
     ]
   in
-  Ok { entries; artifacts = system_artifacts @ page_artifacts }
+  let custom_artifacts = match config.custom_css with
+    | None -> []
+    | Some content -> [ { out_path = "assets/custom.css"; content } ]
+  in
+  let script_artifacts = match config.custom_js with
+    | None -> []
+    | Some content -> [ { out_path = "assets/custom.js"; content } ]
+  in
+  Ok { entries; artifacts = system_artifacts @ custom_artifacts @ script_artifacts @ page_artifacts }

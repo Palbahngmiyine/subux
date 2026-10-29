@@ -89,9 +89,9 @@ let strip_inline_comment raw =
       let c = raw.[i] in
       if c = '\\' && in_double && i + 1 < len then
         loop (i + 2) in_single in_double
-      else if c = '\'' && not in_double then
+      else if c = '\'' && not in_double && (in_single || i = 0 || raw.[i - 1] = '[' || raw.[i - 1] = ',') then
         loop (i + 1) (not in_single) in_double
-      else if c = '"' && not in_single then
+      else if c = '"' && not in_single && (in_double || i = 0 || raw.[i - 1] = '[' || raw.[i - 1] = ',') then
         loop (i + 1) in_single (not in_double)
       else if
         (not in_single) && (not in_double) && c = '#'
@@ -103,6 +103,7 @@ let strip_inline_comment raw =
 
 let has_unbalanced_brackets_or_quotes s =
   let len = String.length s in
+  let structured = len > 0 && (s.[0] = '\'' || s.[0] = '"' || s.[0] = '[' || s.[0] = '{') in
   let rec loop i in_s in_d sq_depth cur_depth =
     if i >= len then in_s || in_d || sq_depth <> 0 || cur_depth <> 0
     else
@@ -126,7 +127,7 @@ let has_unbalanced_brackets_or_quotes s =
         | _ -> loop (i + 1) in_s in_d sq_depth cur_depth
       else loop (i + 1) in_s in_d sq_depth cur_depth
   in
-  loop 0 false false 0 0
+  structured && loop 0 false false 0 0
 
 let has_unsafe_yaml_token v =
   let s = String.trim v in

@@ -232,6 +232,8 @@ let parse_config_json (base : site_config) (raw_json : string) :
           lang = get_str "lang" base.lang;
           base_url = get_str "baseUrl" base.base_url;
           github_url;
+          enable_search = (match List.assoc_opt "enableSearch" fields with
+            | Some (Json_parser.Bool value) -> value | _ -> base.enable_search);
           mode;
           area_tone;
           nav;
@@ -322,7 +324,40 @@ let build_effective_config (opts : cli_options) :
   let* from_file =
     if Sys.file_exists config_file then
       let* raw = read_file_result config_file in
-      parse_config_json initial_base raw
+      let* config = parse_config_json initial_base raw in
+      let* json = Json_parser.parse raw in
+      (match json with
+       | Json_parser.Object fields ->
+           let load_asset key =
+             match List.assoc_opt key fields with
+             | None | Some Json_parser.Null -> Ok None
+             | Some (Json_parser.String path) ->
+                 if path = "" || not (Filename.is_relative path)
+                    || List.exists (fun part -> part = "..") (String.split_on_char '/' path)
+                    || String.contains path '\\'
+                 then Error (Config_error (key ^ " must be a relative path inside the input directory"))
+                 else
+                   let* resolved =
+                     try
+                       let base = Unix.realpath opts.input_dir in
+                       let file = Unix.realpath (Filename.concat base path) in
+                       let prefix = if base = "/" then base else base ^ "/" in
+                       if String.starts_with ~prefix file && (Unix.stat file).Unix.st_kind = Unix.S_REG
+                       then Ok file
+                       else Error (Config_error (key ^ " must resolve to a regular file inside the input directory"))
+                     with
+                     | Sys_error msg -> Error (Io_error msg)
+                     | Unix.Unix_error (err, fn, arg) ->
+                         Error (Io_error (Printf.sprintf "%s(%s): %s" fn arg (Unix.error_message err)))
+                   in
+                   let* content = read_file_result resolved in
+                   Ok (Some content)
+             | Some _ -> Error (Config_error (key ^ " must be a relative file path"))
+           in
+           let* custom_css = load_asset "customCss" in
+           let* custom_js = load_asset "customJs" in
+           Ok { config with custom_css; custom_js }
+       | _ -> Ok config)
     else Ok initial_base
   in
   let with_mode =

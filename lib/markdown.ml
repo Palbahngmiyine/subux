@@ -909,6 +909,25 @@ let render_list_item ~tight c (i, _) =
   close_li ()
 
 let render_table c (t : Block.Table.t) =
+  let unescape_pipes s =
+    let rec loop i acc =
+      if i >= String.length s then String.concat "" (List.rev acc)
+      else if s.[i] = '\\' && i + 1 < String.length s && s.[i + 1] = '|'
+      then loop (i + 2) ("|" :: acc)
+      else loop (i + 1) (String.make 1 s.[i] :: acc)
+    in loop 0 []
+  in
+  let mapper = Mapper.make
+      ~inline_ext_default:(fun _ node -> Some node)
+      ~inline:(fun _ -> function
+        | Inline.Code_span (span, meta) ->
+            let text = unescape_pipes (Inline.Code_span.code span) in
+            Mapper.ret (Inline.Code_span (Inline.Code_span.of_string ~meta text, meta))
+        | _ -> Mapper.default) ()
+  in
+  let render_cell col =
+    C.inline c (Option.value ~default:col (Mapper.map_inline mapper col))
+  in
   let align_attr = function
     | None -> ""
     | Some `Left -> " align=\"left\""
@@ -922,7 +941,7 @@ let render_table c (t : Block.Table.t) =
         C.string c tag;
         C.string c (align_attr (fst a));
         C.byte c '>';
-        C.inline c col;
+        render_cell col;
         C.string c "</";
         C.string c tag;
         C.string c ">\n";
@@ -931,7 +950,7 @@ let render_table c (t : Block.Table.t) =
         C.byte c '<';
         C.string c tag;
         C.byte c '>';
-        C.inline c col;
+        render_cell col;
         C.string c "</";
         C.string c tag;
         C.string c ">\n";
@@ -1043,6 +1062,20 @@ let render_block c = function
         Option.map fst (Option.bind info Block.Code_block.language_of_info_string)
       in
       let lines = List.map fst (Block.Code_block.code cb) in
+      let is_diagram = match lang_opt with
+        | Some lang -> List.mem (String.lowercase_ascii lang) [ "mermaid"; "mmd" ]
+        | None -> false
+      in
+      if not is_diagram then begin
+        C.string c "<div class=\"sx-code-block\">";
+        (match lang_opt with
+         | None -> ()
+         | Some lang ->
+             C.string c "<span class=\"sx-code-label\" aria-hidden=\"true\">";
+             C.string c (escape_html_text lang);
+             C.string c "</span>");
+        C.string c "<button type=\"button\" class=\"sx-code-copy\" aria-label=\"Copy code\"></button>"
+      end;
       begin match lang_opt with
       | Some lang when String.lowercase_ascii lang = "mermaid" || String.lowercase_ascii lang = "mmd" ->
           st.has_mermaid <- true;
@@ -1082,6 +1115,7 @@ let render_block c = function
             lines;
           C.string c "</code></pre>\n"
       end;
+      if not is_diagram then C.string c "</div>\n";
       true
   | Block.List (l, _) ->
       let tight = Block.List'.tight l in
@@ -1126,7 +1160,7 @@ let render_block c = function
 
 let render_footnotes c (st : render_state) =
   if st.footnote_order <> [] then begin
-    C.string c "<section data-footnotes class=\"footnotes\"><ol>\n";
+    C.string c "<section data-footnotes class=\"footnotes\"><h2 class=\"sr-only\" id=\"footnote-label\">Footnotes</h2><ol>\n";
     List.iter
       (fun key ->
         match String_map.find_opt key st.footnotes with
@@ -1137,11 +1171,43 @@ let render_footnotes c (st : render_state) =
             C.string c "<li id=\"";
             C.string c (escape_html_text fn_id);
             C.string c "\">\n";
-            C.block c (Block.Footnote.block entry.fn);
-            C.string c "<a href=\"#";
-            C.string c (escape_html_text ref_id);
-            C.string c
-              "\" data-footnote-backref class=\"data-footnote-backref\" aria-label=\"Back to content\">↩</a>\n</li>\n")
+            let backref () =
+              List.iter
+                (fun occurrence ->
+                  let suffix =
+                    if occurrence = 1 then ""
+                    else "-" ^ Int.to_string occurrence
+                  in
+                  C.string c " <a href=\"#";
+                  C.string c (escape_html_text (ref_id ^ suffix));
+                  C.string c
+                    "\" data-footnote-backref class=\"data-footnote-backref\" aria-label=\"Back to reference ";
+                  C.string c (Int.to_string entry.index ^ suffix);
+                  C.string c "\">↩";
+                  if occurrence > 1 then begin
+                    C.string c "<sup>";
+                    C.string c (Int.to_string occurrence);
+                    C.string c "</sup>"
+                  end;
+                  C.string c "</a>")
+                (List.init entry.ref_count (fun i -> i + 1))
+            in
+            let rec body = function
+              | Block.Paragraph (p, _) ->
+                  C.string c "<p>";
+                  C.inline c (Block.Paragraph.inline p);
+                  backref ();
+                  C.string c "</p>\n"
+              | Block.Blocks (bs, _) ->
+                  let rec blocks = function
+                    | [] -> backref ()
+                    | [last] -> body last
+                    | first :: rest -> C.block c first; blocks rest
+                  in blocks bs
+              | block -> C.block c block; backref ()
+            in
+            body (Block.Footnote.block entry.fn);
+            C.string c "</li>\n")
       st.footnote_order;
     C.string c "</ol></section>\n"
   end
