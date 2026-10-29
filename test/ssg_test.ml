@@ -493,9 +493,86 @@ let test_color_tokens_and_site_builder () =
   print_endline
     "PASS: Design tokens & Site_builder (Blog_mode + Docs_mode) tests"
 
+let test_adapters () =
+  let artifact out_path content : Site_builder.output_artifact =
+    { out_path; content }
+  in
+  let public = [ artifact "index.html" "home"; artifact "404.html" "missing";
+                 artifact "contents/한글/index.html" "guide";
+                 artifact "assets/theme.css" "css" ] in
+  let adapt ?(name = "my-subux") ?(date = "2026-10-29") artifacts =
+    Adapter.adapt Adapter.Cloudflare ~name ~compatibility_date:date artifacts
+  in
+  let expect_error result message = match result with
+    | Error (Config_error _) -> ()
+    | Error e -> fail (message ^ ": " ^ error_to_string e)
+    | Ok _ -> fail message
+  in
+  assert_true (Adapter.of_string "cloudflare" = Ok Adapter.Cloudflare)
+    "5.1 Cloudflare adapter selection";
+  assert_true (Adapter.of_string "static" = Ok Adapter.Static)
+    "5.1 static adapter selection";
+  expect_error (Adapter.of_string "cloudflrae") "5.1 reject unsupported adapter";
+  assert_true
+    (Adapter.adapt Adapter.Static ~name:"" ~compatibility_date:"" public = Ok public)
+    "5.2 default static output unchanged";
+  begin match adapt public with
+  | Error e -> fail (error_to_string e)
+  | Ok artifacts ->
+      let prefix = Adapter.cloudflare_output_dir ^ "/" in
+      let find path =
+        match List.find_opt (fun (a : Site_builder.output_artifact) ->
+          a.out_path = prefix ^ path) artifacts with
+        | Some a -> a.content
+        | None -> fail ("5.3 missing artifact: " ^ path)
+      in
+      let open Json_parser in
+      assert_true (parse (find "config.json") =
+        Ok (Object [ "buildContext", Object [ "isPreview", Bool false ] ]))
+        "5.3 Cloudflare Build Output root schema";
+      assert_true (parse (find "workers/default/worker.config.json") =
+        Ok (Object [
+          "name", String "my-subux";
+          "compatibilityDate", String "2026-10-29";
+          "workersDev", Bool true;
+          "assets", Object [
+            "htmlHandling", String "drop-trailing-slash";
+            "notFoundHandling", String "404-page";
+          ];
+        ])) "5.3 assets-only Worker config preserves URLs and 404 status";
+      assert_true (List.length artifacts = List.length public + 2)
+        "5.3 only supplied assets and deployment configs are packaged";
+      List.iter (fun (a : Site_builder.output_artifact) ->
+        assert_eq_str (find ("workers/default/assets/" ^ a.out_path)) a.content
+          "5.3 preserve public artifact bytes") public;
+      assert_true (adapt public = Ok artifacts) "5.3 deterministic packaging"
+  end;
+  List.iter (fun name ->
+    expect_error (adapt ~name public) "5.4 reject invalid Worker name")
+    [ ""; "123"; "Uppercase"; "-site"; "site-"; "../site";
+      "site\"\nworkersDev=false"; String.make 64 'a' ];
+  List.iter (fun date ->
+    expect_error (adapt ~date public) "5.5 reject invalid date")
+    [ ""; "2026-2-01"; "2026-02-29"; "2026-04-31";
+      "2026-13-01"; "2026-10-29T00:00:00"; "2026-10-29\n" ];
+  assert_true (Result.is_ok (adapt ~date:"2028-02-29" public))
+    "5.5 leap date accepted";
+  List.iter (fun path ->
+    expect_error (adapt (artifact path "private" :: public))
+      "5.6 reject path traversal and unsafe paths")
+    [ ""; "/private"; "../private"; "a/../private"; "./private";
+      "a//b"; "a/"; "a\\b"; "a\000b"; "a\nb" ];
+  expect_error (adapt (artifact "index.html" "duplicate" :: public))
+    "5.7 reject duplicate artifacts";
+  expect_error (adapt (artifact "assets" "file" :: public))
+    "5.7 reject file/directory conflicts";
+  expect_error (adapt []) "5.8 require home and 404 artifacts";
+  print_endline "PASS: Static and Cloudflare adapter tests"
+
 let () =
   test_frontmatter ();
   test_markdown_rendering ();
   test_safe_urls ();
   test_color_tokens_and_site_builder ();
+  test_adapters ();
   print_endline "\nALL TESTS PASSED!"

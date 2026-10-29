@@ -258,9 +258,12 @@ type cli_options = {
   mode_override : site_mode option;
   tone_override : area_tone option;
   title_override : string option;
+  adapter : Adapter.t;
+  cloudflare_name : string;
+  compatibility_date : string;
 }
 
-let parse_cli_args (argv : string list) : cli_options =
+let parse_cli_args (argv : string list) : (cli_options, build_error) result =
   let default_opts =
     {
       subcommand = "build";
@@ -270,10 +273,13 @@ let parse_cli_args (argv : string list) : cli_options =
       mode_override = None;
       tone_override = None;
       title_override = None;
+      adapter = Adapter.Static;
+      cloudflare_name = "subux-site";
+      compatibility_date = "2026-10-29";
     }
   in
   let rec loop opts = function
-    | [] -> opts
+    | [] -> Ok opts
     | ("build" | "tokens" | "check" | "init" | "help" | "--help" | "-h") as cmd
       :: rest ->
         loop { opts with subcommand = cmd } rest
@@ -302,12 +308,100 @@ let parse_cli_args (argv : string list) : cli_options =
         loop { opts with tone_override } rest
     | "--title" :: title :: rest ->
         loop { opts with title_override = Some title } rest
+    | "--adapter" :: adapter :: rest ->
+        let open Result_syntax in
+        let* adapter = Adapter.of_string adapter in
+        loop { opts with adapter } rest
+    | "--name" :: cloudflare_name :: rest ->
+        loop { opts with cloudflare_name } rest
+    | "--compatibility-date" :: compatibility_date :: rest ->
+        loop { opts with compatibility_date } rest
+    | [ ("--adapter" | "--name" | "--compatibility-date") as flag ] ->
+        Error (Config_error ("Missing value for " ^ flag))
     | arg :: rest ->
         if not (String.starts_with ~prefix:"-" arg) && opts.input_dir = "." then
           loop { opts with input_dir = arg } rest
         else loop opts rest
   in
   loop default_opts argv
+
+(* Replace only adapter-owned Build Output. A fresh tree prevents removed or
+   newly drafted pages from surviving a rebuild. Never follow output symlinks. *)
+let write_cloudflare_output output_dir artifacts : (unit, build_error) result =
+  let output_dir =
+    let rec trim_end n =
+      if n > 1 && output_dir.[n - 1] = '/' then trim_end (n - 1) else n
+    in
+    if output_dir = "" then "."
+    else String.sub output_dir 0 (trim_end (String.length output_dir))
+  in
+  let marker_content = "Subux Cloudflare adapter v0\n" in
+  let target = Filename.concat output_dir Adapter.cloudflare_output_dir in
+  let marker dir = Filename.concat dir ".subux-generated" in
+  let rec remove_tree path =
+    match (Unix.lstat path).Unix.st_kind with
+    | Unix.S_DIR ->
+        Array.iter (fun name -> remove_tree (Filename.concat path name))
+          (Sys.readdir path);
+        Unix.rmdir path
+    | _ -> Unix.unlink path
+  in
+  let rec check_directories path =
+    let open Result_syntax in
+    let* () =
+      if path = "." || path = "/" || path = "" then Ok ()
+      else check_directories (Filename.dirname path)
+    in
+    try
+      if (Unix.lstat path).Unix.st_kind = Unix.S_DIR then Ok ()
+      else Error (Io_error ("Adapter output must be a real directory: " ^ path))
+    with Unix.Unix_error (Unix.ENOENT, _, _) -> Ok ()
+  in
+  try
+    let open Result_syntax in
+    let* () = check_directories target in
+    let exists = Sys.file_exists target in
+    let* () =
+      if not exists then Ok ()
+      else
+        let owned =
+          try
+            (Unix.lstat (marker target)).Unix.st_kind = Unix.S_REG
+            && read_file_result (marker target) = Ok marker_content
+          with Unix.Unix_error (Unix.ENOENT, _, _) -> false
+        in
+        if owned then Ok ()
+        else Error (Io_error ("Refusing to replace non-Subux output: " ^ target))
+    in
+    let parent = Filename.dirname target in
+    mkdir_p parent;
+    let staging = Filename.temp_file ~temp_dir:parent ".subux-" "" in
+    Unix.unlink staging;
+    Unix.mkdir staging 0o755;
+    let backup = Filename.concat staging "previous" in
+    Fun.protect
+      ~finally:(fun () ->
+        (* Retain the backup if restoring a failed publish also fails. *)
+        if not (Sys.file_exists backup) then remove_tree staging)
+      (fun () ->
+      let fresh = Filename.concat staging "v0" in
+      let prefix = Adapter.cloudflare_output_dir ^ "/" in
+      let* _ = map_list (fun (a : Site_builder.output_artifact) ->
+        let path = String.sub a.out_path (String.length prefix)
+            (String.length a.out_path - String.length prefix) in
+        write_file_result (Filename.concat fresh path) a.content) artifacts in
+      let* () = write_file_result (marker fresh) marker_content in
+      if exists then Unix.rename target backup;
+      begin try Unix.rename fresh target with exn ->
+        if exists then Unix.rename backup target;
+        raise exn
+      end;
+      if exists then remove_tree backup;
+      Ok ())
+  with
+  | Sys_error msg -> Error (Io_error msg)
+  | Unix.Unix_error (err, fn, arg) ->
+      Error (Io_error (Printf.sprintf "%s(%s): %s" fn arg (Unix.error_message err)))
 
 let build_effective_config (opts : cli_options) :
     (site_config, build_error) result =
@@ -441,12 +535,16 @@ let print_usage () : unit =
     \  subux build  [--mode blog|docs|unified] [--tone primary|accent] [-i <dir>] [-o <dir>] [--tokens <file>]\n\
     \  subux tokens [--tokens <file>] [--tone primary|accent] [-o <css-file>]\n\
     \  subux check  [-i <dir>] [--tokens <file>]\n\
-    \  subux init   [--mode blog|docs] <dir>\n"
+    \  subux init   [--mode blog|docs] <dir>\n";
+  print_endline
+    "Cloudflare Workers Static Assets:\n\
+    \  subux build --adapter cloudflare [--name subux-site] [--compatibility-date YYYY-MM-DD] [-i <dir>] [-o <dir>]\n\
+    \  cd <output-dir> && cf deploy --prebuilt\n"
 
 let run () : (unit, build_error) result =
   let open Result_syntax in
   let argv = Array.to_list Sys.argv |> List.tl in
-  let opts = parse_cli_args argv in
+  let* opts = parse_cli_args argv in
   match opts.subcommand with
   | "help" | "--help" | "-h" ->
       print_usage ();
@@ -469,9 +567,11 @@ let run () : (unit, build_error) result =
       let* tokens_json = read_file_result t_path in
       let sources = discover_sources opts.input_dir config in
       let* plan = Site_builder.compile_site ~config ~tokens_json sources in
+      let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
+          ~compatibility_date:opts.compatibility_date plan.artifacts in
       Printf.printf "OK: Checked %d markdown entries and %d generated artifacts.\n"
         (List.length plan.entries)
-        (List.length plan.artifacts);
+        (List.length artifacts);
       Ok ()
   | _ ->
       let* config = build_effective_config opts in
@@ -479,18 +579,29 @@ let run () : (unit, build_error) result =
       let* tokens_json = read_file_result t_path in
       let sources = discover_sources opts.input_dir config in
       let* plan = Site_builder.compile_site ~config ~tokens_json sources in
-      let* _ =
-        map_list
+      let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
+          ~compatibility_date:opts.compatibility_date plan.artifacts in
+      let* () = match opts.adapter with
+        | Adapter.Cloudflare -> write_cloudflare_output opts.output_dir artifacts
+        | Adapter.Static ->
+          let* _ = map_list
           (fun (art : Site_builder.output_artifact) ->
             let full_out = Filename.concat opts.output_dir art.out_path in
             write_file_result full_out art.content)
-          plan.artifacts
+          artifacts in
+          Ok ()
       in
       Printf.printf
         "Built %d entries -> %d static artifacts in %s\n"
         (List.length plan.entries)
-        (List.length plan.artifacts)
+        (List.length artifacts)
         opts.output_dir;
+      begin match opts.adapter with
+      | Adapter.Static -> ()
+      | Adapter.Cloudflare ->
+          Printf.printf "Deploy: cd %s && cf deploy --prebuilt\n"
+            (Filename.quote opts.output_dir)
+      end;
       Ok ()
 
 let () =
