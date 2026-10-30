@@ -37,6 +37,7 @@ ocamlprof.dump
 /dist/
 /output/
 /site/
+/.cloudflare/
 
 # =============================================================================
 # Vendored & Design System Sources (Explicitly Tracked)
