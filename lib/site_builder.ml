@@ -56,6 +56,7 @@ let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
   in
   let base_folder = if src.collection = "contents" || src.collection = "docs" then "" else src.collection in
   let slug = Slug.of_key ~base_folder src.rel_path in
+  let rendered = Markdown.render ~heading_base:2 doc.body in
   let title =
     match doc.meta.title with
     | Some t when String.trim t <> "" -> String.trim t
@@ -69,7 +70,6 @@ let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
             end
         end
   in
-  let rendered = Markdown.render ~heading_base:2 ~page_title:title doc.body in
   Ok
     {
       collection = src.collection;
@@ -247,22 +247,13 @@ let common_head ~stylesheet ~(page_title : string) ~(description : string)
       ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ();
     Html.el "noscript" [Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous");
       ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ()];
-  ] @ (match config.custom_css with
-      | None -> []
-      | Some _ -> [ Html.void "link"
-          ~attrs:[ ("rel", "stylesheet"); ("href", "/assets/custom.css") ] () ])
-    @ (match config.custom_js with
-       | None -> []
-       | Some _ -> [ Html.el "script"
-           ~attrs:[ ("type", "module"); ("src", "/assets/custom.js") ] [] ])
+  ]
 
-let document ?(customized = false) ~lang ~head ~body () =
+let document ~lang ~head ~body =
   let html = Html.to_string (Html.frag body) in
   let head = List.map (function
     | Html.El ("style", attrs, [Html.Raw css]) ->
-        let css = if customized then Token_compiler.minify_css css
-          else Token_compiler.critical_stylesheet ~html css in
-        Html.el "style" ~attrs [Html.raw css]
+        Html.el "style" ~attrs [Html.raw (Token_compiler.critical_stylesheet ~html css)]
     | node -> node) head in
   Html.to_document ~lang ~head ~body
 
@@ -298,192 +289,31 @@ function restore(){const q=new URLSearchParams(location.search).get('tab');const
 document.addEventListener('click',e=>{const a=e.target.closest?.('a.tab-link[data-tab-id]');if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target||!select(a.dataset.tabId))return;e.preventDefault();const u=new URL(location.href);u.searchParams.set('tab',a.dataset.tabId);history.pushState(null,'',u);});
 window.addEventListener('popstate',restore);restore();})();|}]
 
-let jt_runtime_script : Html.node =
-  Html.el "script" [ Html.raw {|(function () {
-  const root = document.documentElement;
-  let saved;
-  try { saved = localStorage.getItem('sx-theme'); } catch {}
-  if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
-  const themeButton = document.getElementById('jt-theme-toggle');
-  const systemTheme = matchMedia('(prefers-color-scheme: dark)');
-  const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : systemTheme.matches;
-  function updateThemeButton() {
-    if (themeButton) themeButton.setAttribute('aria-checked', String(isDark()));
-  }
-  updateThemeButton();
-  systemTheme.addEventListener('change', updateThemeButton);
-  if (themeButton) themeButton.addEventListener('click', () => {
-    root.dataset.theme = isDark() ? 'light' : 'dark';
-    try { localStorage.setItem('sx-theme', root.dataset.theme); } catch {}
-    updateThemeButton();
-  });
-  const menu = document.getElementById('jt-main-nav');
-  const menuButton = document.getElementById('jt-menu-toggle');
-  if (menu && menuButton) {
-    menu.dataset.ready = 'true';
-    menuButton.addEventListener('click', () => {
-      const open = menuButton.getAttribute('aria-expanded') !== 'true';
-      menuButton.setAttribute('aria-expanded', String(open));
-      menu.dataset.open = String(open);
-      document.body.style.overflow = open ? 'hidden' : '';
-    });
-    matchMedia('(min-width: 960px)').addEventListener('change', () => {
-      menu.dataset.open = 'false';
-      menuButton.setAttribute('aria-expanded', 'false');
-      document.body.style.overflow = '';
-    });
-  }
-  const sidebar = document.getElementById('jt-sidebar');
-  const sidebarButton = document.getElementById('jt-sidebar-toggle');
-  const backdrop = document.getElementById('jt-sidebar-backdrop');
-  const outline = document.getElementById('jt-outline');
-  const outlineButton = document.getElementById('jt-outline-toggle');
-  function closeSidebar(restoreFocus = true) {
-    if (!sidebar || sidebar.dataset.open !== 'true') return;
-    sidebar.dataset.open = 'false';
-    sidebarButton.setAttribute('aria-expanded', 'false');
-    backdrop.hidden = true;
-    document.body.style.overflow = '';
-    if (restoreFocus) sidebarButton.focus();
-  }
-  if (sidebar && sidebarButton && backdrop) {
-    sidebar.dataset.ready = 'true';
-    sidebarButton.addEventListener('click', () => {
-      sidebar.dataset.open = 'true';
-      sidebarButton.setAttribute('aria-expanded', 'true');
-      backdrop.hidden = false;
-      document.body.style.overflow = 'hidden';
-      const link = sidebar.querySelector('a');
-      if (link) link.focus();
-    });
-    backdrop.addEventListener('click', closeSidebar);
-    matchMedia('(min-width: 960px)').addEventListener('change', () => closeSidebar(false));
-  }
-  if (outline && outlineButton) {
-    outline.dataset.ready = 'true';
-    outlineButton.addEventListener('click', () => {
-      const open = outline.dataset.open !== 'true';
-      outline.dataset.open = String(open);
-      outlineButton.setAttribute('aria-expanded', String(open));
-    });
-    outline.addEventListener('click', event => {
-      if (event.target.closest('a')) {
-        outline.dataset.open = 'false';
-        outlineButton.setAttribute('aria-expanded', 'false');
-      }
-    });
-    document.addEventListener('click', event => {
-      if (!outline.contains(event.target) && !outlineButton.contains(event.target)) {
-        outline.dataset.open = 'false';
-        outlineButton.setAttribute('aria-expanded', 'false');
-      }
-    });
-  }
-  document.querySelectorAll('.sx-code-copy').forEach(button => {
-    let resetCopy;
-    button.addEventListener('click', async () => {
-      const code = button.parentElement.querySelector('pre code');
-      if (!code) return;
-      try {
-        await navigator.clipboard.writeText(code.textContent);
-        button.setAttribute('aria-label', 'Copied');
-        button.dataset.copied = 'true';
-        clearTimeout(resetCopy);
-        resetCopy = setTimeout(() => {
-          delete button.dataset.copied;
-          button.setAttribute('aria-label', 'Copy code');
-        }, 2000);
-      }
-      catch { button.setAttribute('aria-label', 'Copy failed'); }
-    });
-  });
-  const modal = document.getElementById('jt-search-modal');
-  const openButton = document.getElementById('jt-search-open');
-  const input = document.getElementById('jt-search-input');
-  const results = document.getElementById('jt-search-results');
-  let indexData = null;
-  let indexPromise = null;
-  let previousFocus = null;
-  function renderResults() {
-    if (!input || !results) return;
-    results.replaceChildren();
-    const query = input.value.trim().toLowerCase();
-    if (!query || !Array.isArray(indexData)) return;
-    indexData.filter(item => (item.title || '').toLowerCase().includes(query) ||
-      (item.text || '').toLowerCase().includes(query)).slice(0, 8).forEach(item => {
-        const li = document.createElement('li');
-        const link = document.createElement('a');
-        link.href = item.href;
-        link.className = 'jt-sidebar-link';
-        link.textContent = item.title;
-        li.append(link);
-        results.append(li);
-      });
-  }
-  async function openSearch() {
-    if (!modal || !modal.hidden) return;
-    previousFocus = document.activeElement;
-    modal.hidden = false;
-    if (input) input.focus();
-    if (!indexPromise) indexPromise = fetch('/search-index.json').then(async response => {
-      if (!response.ok) throw new Error('Search index unavailable');
-      indexData = await response.json();
-    }).catch(() => { indexPromise = null; indexData = null; });
-    await indexPromise;
-    if (!modal.hidden) renderResults();
-  }
-  function closeSearch() {
-    if (!modal || modal.hidden) return;
-    modal.hidden = true;
-    if (previousFocus && previousFocus.isConnected) previousFocus.focus();
-  }
-  if (openButton) openButton.addEventListener('click', openSearch);
-  if (input) input.addEventListener('input', renderResults);
-  if (modal) modal.addEventListener('click', event => { if (event.target === modal) closeSearch(); });
-  window.addEventListener('keydown', event => {
-    if (modal && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      if (modal.hidden) openSearch(); else closeSearch();
-    } else if (event.key === 'Escape') {
-      closeSidebar();
-      if (outline && outlineButton) { outline.dataset.open = 'false'; outlineButton.setAttribute('aria-expanded', 'false'); }
-      const searchWasOpen = modal && !modal.hidden;
-      closeSearch();
-      if (!searchWasOpen && menu && menuButton && menu.dataset.open === 'true') {
-        menu.dataset.open = 'false';
-        menuButton.setAttribute('aria-expanded', 'false');
-        document.body.style.overflow = '';
-        menuButton.focus();
-      }
-    } else if (event.key === 'Tab') {
-      const activePanel = modal && !modal.hidden ? modal : sidebar && sidebar.dataset.open === 'true' ? sidebar : null;
-      if (!activePanel) return;
-      const focusable = Array.from(activePanel.querySelectorAll('input, a[href], button')).filter(el => el.getClientRects().length);
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (!first) { event.preventDefault(); return; }
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-  });
-})();|} ]
+let jt_runtime_script : Html.node = Html.el "script" [Html.raw {|(()=>{
+const root=document.documentElement;try{const saved=localStorage.getItem('sx-theme');if(saved==='light'||saved==='dark')root.dataset.theme=saved;}catch{}
+document.getElementById('jt-theme-toggle')?.addEventListener('click',()=>{const dark=root.dataset.theme?root.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const next=dark?'light':'dark';root.dataset.theme=next;try{localStorage.setItem('sx-theme',next);}catch{}});
+const modal=document.getElementById('jt-search-modal'),input=document.getElementById('jt-search-input'),results=document.getElementById('jt-search-results'),openBtn=document.getElementById('jt-search-open');
+let indexPromise,returnFocus;
+function render(items){results.replaceChildren();const q=input.value.trim().toLowerCase();if(!q)return;items.filter(it=>(it.title+' '+it.text).toLowerCase().includes(q)).slice(0,8).forEach(it=>{const li=document.createElement('li'),a=document.createElement('a');a.href=it.href;a.className='jt-sidebar-link';a.textContent=it.title;li.append(a);results.append(li);});}
+async function open(){if(!modal)return;returnFocus=document.activeElement;modal.hidden=false;input.focus();indexPromise??=fetch('/search-index.json').then(r=>{if(!r.ok)throw Error();return r.json();}).catch(()=>{indexPromise=null;return [];});const items=await indexPromise;if(!modal.hidden)render(items);}
+function close(){if(!modal||modal.hidden)return;modal.hidden=true;returnFocus?.focus();}
+openBtn?.addEventListener('click',open);
+window.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'&&modal){e.preventDefault();modal.hidden?open():close();}else if(e.key==='Escape')close();
+if(e.key==='Tab'&&modal&&!modal.hidden){const els=[...modal.querySelectorAll('input,a,button')];const first=els[0],last=els.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
+modal?.addEventListener('click',e=>{if(e.target===modal)close();});input?.addEventListener('input',async()=>{if(indexPromise)render(await indexPromise);});
+})();|}]
 
-let normalize_href_for_match (href : string) : string =
-  let s = String.trim href in
-  let len = String.length s in
-  if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1)
-  else if String.ends_with ~suffix:".md" s then
-    String.sub s 0 (len - 3)
-  else s
+let search_button (config : site_config) =
+  if config.enable_search then Html.el "button" ~attrs:[("type", "button");
+    ("id", "jt-search-open"); ("class", "jt-search-btn"); ("aria-label", "Search ⌘K")]
+    [Html.txt "Search ⌘K"] else Html.empty
 
-
-let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site_config) : Html.node =
+let render_jt_navbar (config : site_config) : Html.node =
   let nav_links =
     List.map
       (fun (item : nav_item) ->
         Html.el "a"
-          ~attrs:([ ("href", safe_href item.link); ("class", "jt-nav-link") ]
-            @ if normalize_href_for_match item.link = normalize_href_for_match current_href
-              then [ ("aria-current", "page") ] else [])
+          ~attrs:[ ("href", safe_href item.link); ("class", "jt-nav-link") ]
           [ Html.txt item.text ])
       config.nav
   in
@@ -495,7 +325,7 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
             ("type", "button");
             ("id", "jt-search-open");
             ("class", "jt-search-btn");
-            ("aria-label", "Search documentation");
+            ("aria-label", "Search ⌘K");
           ]
         [ Html.txt "Search ⌘K" ]
     else Html.empty
@@ -507,13 +337,9 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
           ("type", "button");
           ("id", "jt-theme-toggle");
           ("class", "jt-theme-toggle");
-          ("role", "switch");
-          ("aria-checked", "false");
           ("aria-label", "Toggle color theme");
         ]
-      [ Html.el "span" ~attrs:[ ("class", "jt-theme-check"); ("aria-hidden", "true") ]
-          [ Html.el "span" ~attrs:[ ("class", "jt-theme-sun") ] [];
-            Html.el "span" ~attrs:[ ("class", "jt-theme-moon") ] [] ] ]
+      [ Html.txt "◐" ]
   in
   let github_node =
     match config.github_url with
@@ -534,29 +360,17 @@ let render_jt_navbar ?(current_href = "/") ?(has_sidebar = false) (config : site
           ]
   in
   Html.el "header"
-    ~attrs:[ ("class", if has_sidebar then "jt-navbar with-sidebar" else "jt-navbar") ]
+    ~attrs:[ ("class", "jt-navbar") ]
     [
       Html.el "div"
         ~attrs:[ ("class", "jt-navbar-inner") ]
         [
           Html.el "a"
             ~attrs:[ ("href", "/"); ("class", "jt-brand") ]
-            [ Html.el "span" [ Html.txt config.title ] ];
-          Html.el "button"
-            ~attrs:[ ("type", "button"); ("id", "jt-menu-toggle");
-                     ("class", "jt-menu-toggle"); ("aria-label", "Toggle navigation");
-                     ("aria-controls", "jt-main-nav"); ("aria-expanded", "false") ]
-            [ Html.el "span" ~attrs:[ ("class", "jt-menu-icon"); ("aria-hidden", "true") ]
-                [ Html.el "span" ~attrs:[ ("class", "top") ] [];
-                  Html.el "span" ~attrs:[ ("class", "middle") ] [];
-                  Html.el "span" ~attrs:[ ("class", "bottom") ] [] ] ];
+            [ Html.txt config.title ];
           Html.el "nav"
-            ~attrs:[ ("id", "jt-main-nav"); ("class", "jt-nav-links");
-                     ("data-ready", "false"); ("data-open", "false"); ("aria-label", "Main Navigation") ]
-            (nav_links @ [ search_btn;
-              Html.el "div" ~attrs:[ ("class", "jt-appearance") ]
-                [ Html.el "span" ~attrs:[ ("class", "jt-appearance-label") ] [ Html.txt "Appearance" ]; theme_btn ];
-              github_node ]);
+            ~attrs:[ ("class", "jt-nav-links"); ("aria-label", "Main Navigation") ]
+            (nav_links @ [ search_btn; theme_btn; github_node ]);
         ];
     ]
 
@@ -570,7 +384,7 @@ let render_jt_search_modal (config : site_config) : Html.node =
           ("class", "jt-search-modal");
           ("role", "dialog");
           ("aria-modal", "true");
-          ("aria-label", "Search");
+          ("aria-label", "Search ⌘K");
           ("hidden", "hidden");
         ]
       [
@@ -583,7 +397,7 @@ let render_jt_search_modal (config : site_config) : Html.node =
                   ("type", "search");
                   ("id", "jt-search-input");
                   ("class", "jt-search-input");
-                  ("placeholder", "Search docs...");
+                  ("placeholder", "Search...");
                   ("aria-label", "Search query");
                   ("autocomplete", "off");
                 ]
@@ -596,16 +410,7 @@ let render_jt_search_modal (config : site_config) : Html.node =
       ]
 
 
-
-let search_button (config : site_config) =
-  if config.enable_search then Html.el "button" ~attrs:[("type", "button");
-    ("id", "jt-search-open"); ("class", "jt-search-btn"); ("aria-label", "Search ⌘K")]
-    [Html.txt "Search ⌘K"] else Html.empty
-
 (* 1. Blog_mode Home, Article & 404 Renderers *)
-let page_title_attrs (entry : parsed_entry) =
-  match entry.rendered.page_title_id with None -> [] | Some id -> [("id", id)]
-
 let render_article_list_node (entries : parsed_entry list) : Html.node =
   if entries = [] then
     Html.el "div"
@@ -753,8 +558,7 @@ let render_blog_home ?stylesheet ~(config : site_config) ~(active_tab : string)
       subux_tabs_runtime_script;
     ]
   in
-  document ~customized:(config.custom_css <> None || config.custom_js <> None)
-    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+  document ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script])
 
 let render_blog_article ?stylesheet ~(config : site_config)
     ~(series : series_info option) (entry : parsed_entry) : string =
@@ -847,7 +651,7 @@ let render_blog_article ?stylesheet ~(config : site_config)
                 [
                   Html.el "header"
                     ~attrs:[ ("class", "article-header") ]
-                    [ Html.el "h1" ~attrs:(page_title_attrs entry) [ Html.txt entry.title ]; date_node ];
+                    [ Html.el "h1" [ Html.txt entry.title ]; date_node ];
                   series_node;
                   Html.el "div"
                     ~attrs:[ ("class", "article-content") ]
@@ -858,8 +662,7 @@ let render_blog_article ?stylesheet ~(config : site_config)
     ]
     @ scripts
   in
-  document ~customized:(config.custom_css <> None || config.custom_js <> None)
-    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+  document ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script])
 
 let render_not_found_page ?stylesheet ~(config : site_config) () : string =
   let page_title = "이곳엔 아무것도 없습니다 | " ^ config.title in
@@ -885,12 +688,19 @@ let render_not_found_page ?stylesheet ~(config : site_config) () : string =
         ];
     ]
   in
-  document ~customized:(config.custom_css <> None || config.custom_js <> None)
-    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+  document ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script])
 
 let render_not_found ~config = render_not_found_page ~config ()
 
 (* 2. Docs_mode Navbar, Search Modal, Home & Documentation Page Renderers *)
+let normalize_href_for_match (href : string) : string =
+  let s = String.trim href in
+  let len = String.length s in
+  if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1)
+  else if String.ends_with ~suffix:".md" s then
+    String.sub s 0 (len - 3)
+  else s
+
 let effective_sidebar_groups (config : site_config)
     (all_docs : parsed_entry list) : sidebar_group list =
   let doc_entries =
@@ -958,7 +768,7 @@ let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) 
           ~attrs:[ ("class", "jt-hero") ]
           [
             Html.el "h1"
-              ~attrs:(("class", "jt-hero-name") :: page_title_attrs entry)
+              ~attrs:[ ("class", "jt-hero-name") ]
               [ Html.txt entry.title ];
           ]
     | Some h ->
@@ -1002,7 +812,7 @@ let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) 
           ~attrs:[ ("class", "jt-hero") ]
           [
             Html.el "h1"
-              ~attrs:(("class", "jt-hero-name") :: page_title_attrs entry)
+              ~attrs:[ ("class", "jt-hero-name") ]
               [ Html.txt h.name ];
             text_node;
             tagline_node;
@@ -1048,8 +858,7 @@ let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) 
       (if entry.rendered.has_mermaid then mermaid_runtime_script else Html.empty);
     ]
   in
-  document ~customized:(config.custom_css <> None || config.custom_js <> None)
-    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+  document ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script])
 
 let render_docs_page ?stylesheet ~(config : site_config)
     ~(all_docs : parsed_entry list) (entry : parsed_entry) : string =
@@ -1058,8 +867,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
   let groups = effective_sidebar_groups config all_docs in
   let sidebar_node =
     Html.el "aside"
-      ~attrs:[ ("id", "jt-sidebar"); ("class", "jt-sidebar");
-               ("data-ready", "false"); ("data-open", "false"); ("aria-label", "Sidebar Navigation") ]
+      ~attrs:[ ("class", "jt-sidebar"); ("aria-label", "Sidebar Navigation") ]
       (List.map
          (fun (g : sidebar_group) ->
            Html.el "div"
@@ -1094,16 +902,12 @@ let render_docs_page ?stylesheet ~(config : site_config)
   let outline_node =
     if entry.rendered.toc = [] then
       Html.el "aside"
-        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline");
-                 ("data-ready", "false"); ("data-open", "false"); ("aria-label", "On this page") ]
+        ~attrs:[ ("class", "jt-outline"); ("aria-label", "On this page") ]
         []
     else
       Html.el "aside"
-        ~attrs:[ ("id", "jt-outline"); ("class", "jt-outline");
-                 ("data-ready", "false"); ("data-open", "false"); ("aria-label", "On this page") ]
+        ~attrs:[ ("class", "jt-outline"); ("aria-label", "On this page") ]
         [
-          Html.el "a" ~attrs:[ ("class", "jt-outline-top"); ("href", "#") ]
-            [ Html.txt "Return to top" ];
           Html.el "p"
             ~attrs:[ ("class", "jt-outline-title") ]
             [ Html.txt "On this page" ];
@@ -1175,22 +979,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
   in
   let body =
     [
-      render_jt_navbar ~current_href ~has_sidebar:true config;
-      Html.el "div" ~attrs:[ ("class", "jt-local-nav") ]
-        [ Html.el "button"
-            ~attrs:[ ("type", "button"); ("id", "jt-sidebar-toggle");
-                     ("aria-controls", "jt-sidebar"); ("aria-expanded", "false") ]
-            [ Html.el "span" ~attrs:[ ("class", "jt-local-menu-icon"); ("aria-hidden", "true") ] [];
-              Html.txt "Menu" ];
-          Html.el "button"
-            ~attrs:[ ("type", "button"); ("id", "jt-outline-toggle");
-                     ("aria-controls", "jt-outline"); ("aria-expanded", "false") ]
-            [ Html.txt "On this page";
-              Html.el "span" ~attrs:[ ("class", "jt-local-chevron"); ("aria-hidden", "true") ] [] ] ];
-      Html.el "button"
-        ~attrs:[ ("type", "button"); ("id", "jt-sidebar-backdrop");
-                 ("class", "jt-sidebar-backdrop"); ("aria-label", "Close document navigation");
-                 ("hidden", "hidden") ] [];
+      render_jt_navbar config;
       Html.el "div"
         ~attrs:[ ("class", "jt-doc-layout") ]
         [
@@ -1200,7 +989,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
             [
               Html.el "article"
                 ~attrs:[ ("class", "article-content") ]
-                [ Html.el "h1" ~attrs:(page_title_attrs entry) [Html.txt entry.title]; Html.raw entry.rendered.html ];
+                [ Html.el "h1" [Html.txt entry.title]; Html.raw entry.rendered.html ];
               pager_footer;
             ];
           outline_node;
@@ -1209,8 +998,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
     ]
     @ scripts
   in
-  document ~customized:(config.custom_css <> None || config.custom_js <> None)
-    ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script]) ()
+  document ~lang:config.lang ~head ~body:(skip_link :: body @ [prefetch_script; callout_script])
 
 (* 3. Search Index & Sitemap Generators *)
 let utf8_prefix limit text =
@@ -1440,12 +1228,4 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
       };
     ]
   in
-  let custom_artifacts = match config.custom_css with
-    | None -> []
-    | Some content -> [ { out_path = "assets/custom.css"; content } ]
-  in
-  let script_artifacts = match config.custom_js with
-    | None -> []
-    | Some content -> [ { out_path = "assets/custom.js"; content } ]
-  in
-  Ok { entries; artifacts = system_artifacts @ custom_artifacts @ script_artifacts @ page_artifacts }
+  Ok { entries; artifacts = system_artifacts @ page_artifacts }
