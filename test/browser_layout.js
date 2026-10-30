@@ -1,5 +1,5 @@
-// Run with the Playwright browser_run_code tool (filename), against the three
-// running servers documented in STYLE-VERIFICATION.md. Baselines are originals.
+// Run with Playwright's file runner. Originals use ports 4175/4177; generated
+// sites use 4173/4174, and the search-enabled default docs fixture uses 4176.
 async (currentPage) => {
   const context = await currentPage.context().browser().newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' });
   context.setDefaultTimeout(30000);

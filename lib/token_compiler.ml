@@ -842,8 +842,10 @@ a.jt-sidebar-link[aria-current='page'] {
 .jt-outline a {
   display: block;
   padding: 4px var(--sx-space-2);
-  color: var(--sx-color-text-muted);
-  text-decoration: none;
+  color: var(--sx-color-link);
+  text-decoration: underline;
+  text-underline-offset: .15em;
+  min-height: var(--sx-size-touch-target-min);
 }
 .jt-outline a:hover { color: var(--sx-color-text); }
 .jt-outline a.toc-link-h3 { padding-left: var(--sx-space-3); }
@@ -987,13 +989,6 @@ details[data-callout]:not([open]) .callout-content { display: none; }
 }
 .jt-doc-main { min-width: 0; }
 .jt-doc-main .article-content { margin-top: 0; }
-.jt-outline a {
-  display: block;
-  padding: 4px var(--sx-space-2);
-  color: var(--sx-color-text-muted);
-  text-decoration: none;
-}
-.jt-outline ul { list-style: none; padding: 0; }
 .jt-pager-link.next { text-align: right; }
 .jt-search-modal[hidden] { display: none; }
 .jt-search-modal {
@@ -1002,6 +997,7 @@ details[data-callout]:not([open]) .callout-content { display: none; }
   z-index: 100;
   background: var(--sx-color-surface-muted);
   backdrop-filter: blur(var(--sx-blur-sm));
+  overflow-y: auto;
   padding: min(15vh, var(--sx-space-10)) var(--sx-space-2);
 }
 .jt-search-dialog {
@@ -1033,6 +1029,10 @@ details[data-callout]:not([open]) .callout-content { display: none; }
 .jt-menu-icon .bottom { top: 12px; transform: translateX(4px); }
 @media (max-width: 959px) {
   .jt-menu-toggle { display: block; margin-left: auto; }
+  .jt-navbar:has(.jt-nav-links[data-open='true']) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
   .jt-brand { font-size: 1rem; }
   .jt-navbar-inner { flex-wrap: wrap; min-height: 4rem; }
   .jt-nav-links { width: 100%%; padding-bottom: var(--sx-space-2); }
@@ -1055,7 +1055,6 @@ details[data-callout]:not([open]) .callout-content { display: none; }
 }
 
 .jt-hero-text { font-size: 1.5rem; }
-.jt-outline a { min-height: var(--sx-size-touch-target-min); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
 
 /* 404 Not Found & Empty State */

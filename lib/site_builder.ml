@@ -603,6 +603,9 @@ let search_button (config : site_config) =
     [Html.txt "Search ⌘K"] else Html.empty
 
 (* 1. Blog_mode Home, Article & 404 Renderers *)
+let page_title_attrs (entry : parsed_entry) =
+  match entry.rendered.page_title_id with None -> [] | Some id -> [("id", id)]
+
 let render_article_list_node (entries : parsed_entry list) : Html.node =
   if entries = [] then
     Html.el "div"
@@ -844,7 +847,7 @@ let render_blog_article ?stylesheet ~(config : site_config)
                 [
                   Html.el "header"
                     ~attrs:[ ("class", "article-header") ]
-                    [ Html.el "h1" [ Html.txt entry.title ]; date_node ];
+                    [ Html.el "h1" ~attrs:(page_title_attrs entry) [ Html.txt entry.title ]; date_node ];
                   series_node;
                   Html.el "div"
                     ~attrs:[ ("class", "article-content") ]
@@ -955,7 +958,7 @@ let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) 
           ~attrs:[ ("class", "jt-hero") ]
           [
             Html.el "h1"
-              ~attrs:[ ("class", "jt-hero-name") ]
+              ~attrs:(("class", "jt-hero-name") :: page_title_attrs entry)
               [ Html.txt entry.title ];
           ]
     | Some h ->
@@ -999,7 +1002,7 @@ let render_docs_home ?stylesheet ~(config : site_config) (entry : parsed_entry) 
           ~attrs:[ ("class", "jt-hero") ]
           [
             Html.el "h1"
-              ~attrs:[ ("class", "jt-hero-name") ]
+              ~attrs:(("class", "jt-hero-name") :: page_title_attrs entry)
               [ Html.txt h.name ];
             text_node;
             tagline_node;
@@ -1197,7 +1200,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
             [
               Html.el "article"
                 ~attrs:[ ("class", "article-content") ]
-                [ Html.el "h1" [Html.txt entry.title]; Html.raw entry.rendered.html ];
+                [ Html.el "h1" ~attrs:(page_title_attrs entry) [Html.txt entry.title]; Html.raw entry.rendered.html ];
               pager_footer;
             ];
           outline_node;

@@ -250,6 +250,15 @@ let test_markdown_rendering () =
     "2.5 code outside tables keeps literal backslashes";
 
   (* 2.6 syntax highlighting preserves aliases and leaves text and Mermaid fences untouched *)
+  let padded_table = render_html
+      "| Code |\n| --- |\n| `  foo  ` |\n| `  a \\| b  ` |\n| `   ` |\n| `` `foo` `` |\n" in
+  assert_contains padded_table "<code> foo </code>"
+    "table code normalizes surrounding spaces only once";
+  assert_contains padded_table "<code> a | b </code>"
+    "table pipe unescaping preserves significant surrounding spaces";
+  assert_contains padded_table "<code>   </code>" "all-space table code stays intact";
+  assert_contains padded_table "<code>`foo`</code>" "table code retains literal backticks";
+
   let html_code =
     render_html
       "```sh\necho \"hello\"\n```\n\n```yml\nname: test\n```\n\n```json\n{\"ready\":true}\n```\n\n```text\nplain <text>\n```\n\n```mermaid\ngraph LR; A --> B\n```"
@@ -291,6 +300,7 @@ let test_markdown_rendering () =
   let titled = Markdown.render ~heading_base:2 ~page_title:"Page title"
       "\n# **Page title**\n\n## Section\n\nBody" in
   assert_not_contains titled.html "Page title" "template owns a matching leading title";
+  assert_true (titled.page_title_id = Some "page-title") "removed H1 keeps its generated anchor";
   assert_contains titled.html "<h2 id=\"section\">" "body headings retain their hierarchy";
   assert_contains titled.html "Body" "removing a duplicate title preserves body text";
   assert_not_contains (Markdown.render ~page_title:"Page title" "Page title\n==========\n").html
@@ -299,6 +309,14 @@ let test_markdown_rendering () =
     "Page title" "a different body heading is preserved";
   assert_contains (Markdown.render ~page_title:"Page title" "Intro\n\n# Page title").html
     "<h1" "later matching headings are not removed";
+  assert_true ((Markdown.render ~page_title:"Page title" "Page title\n==========\n").page_title_id
+      = Some "page-title") "Setext title keeps its generated anchor";
+  assert_true ((Markdown.render ~page_title:"main-content" "# main-content").page_title_id
+      = Some "main-content-1") "title anchors avoid reserved template IDs";
+  assert_true ((Markdown.render ~page_title:"Other" "# Page title").page_title_id = None)
+    "nonmatching titles do not allocate a template anchor";
+  assert_true ((Markdown.render ~page_title:"Page title" "Intro\n\n# Page title").page_title_id = None)
+    "later headings do not allocate a template anchor";
 
   let repeated_fn =
     render_html "First[^note] then[^note] and last[^note].\n\n[^note]: [Unsafe](javascript:alert(1))."
@@ -719,6 +737,30 @@ let test_lighthouse_tasks () =
     | Ok p -> p | Error e -> fail (error_to_string e) in
   let find (plan : Site_builder.build_plan) path =
     (List.find (fun (a : Site_builder.output_artifact) -> a.out_path = path) plan.artifacts).content in
+  let anchored_entry extra =
+    match Site_builder.parse_source_file {source with raw_markdown=
+      "---\ntitle: Page title\n" ^ extra ^ "---\n# **Page title**\n\n[Back to title](#page-title)\n\n## Page title"} with
+    | Ok entry -> entry | Error e -> fail (error_to_string e) in
+  let anchored = anchored_entry "" in
+  let hero = anchored_entry "layout: home\nhero:\n  name: Landing title\n" in
+  List.iter (fun (html, heading) ->
+      assert_contains html heading "template H1 preserves the removed Markdown title anchor";
+      assert_contains html "href=\"#page-title\"" "title fragment links remain intact";
+      assert_contains html "<h2 id=\"page-title-1\">" "body heading does not reuse the title ID")
+    [Site_builder.render_blog_article ~config:default_blog_config ~series:None anchored,
+       "<h1 id=\"page-title\">";
+     Site_builder.render_docs_page ~config:default_docs_config ~all_docs:[anchored] anchored,
+       "<h1 id=\"page-title\">";
+     Site_builder.render_docs_home ~config:default_docs_config anchored,
+       "<h1 class=\"jt-hero-name\" id=\"page-title\">";
+     Site_builder.render_docs_home ~config:default_docs_config hero,
+       "<h1 class=\"jt-hero-name\" id=\"page-title\">"];
+  assert_contains css ".jt-outline a {\n  display: block;\n  padding: 4px var(--sx-space-2);\n  color: var(--sx-color-link);\n  text-decoration: underline;"
+    "default outline uses the link token with a non-color indicator";
+  let docs_html = find (compile default_docs_config
+      [{source with collection="contents"; rel_path="contents/guide.md"}]) "contents/guide/index.html" in
+  assert_contains docs_html ".jt-navbar:has(" "critical CSS retains the open-menu header override";
+  assert_contains docs_html "overflow-y:auto" "critical CSS retains scrollable dialog rules";
   List.iter (fun mode ->
     let config = {(if mode = Docs_mode then default_docs_config else default_blog_config) with mode} in
     let plan = compile config [source] in

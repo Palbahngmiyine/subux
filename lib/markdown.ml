@@ -5,6 +5,7 @@ module String_map = Map.Make (String)
 
 type rendered_markdown = {
   html : string;
+  page_title_id : string option;
   toc : Domain.toc_item list;
   plain_text : string;
   has_mermaid : bool;
@@ -649,31 +650,41 @@ type render_state = {
 
 let rstate : render_state C.State.t = C.State.make ()
 
-let init_render_state c _doc =
+let reserved_heading_ids = String_set.of_list
+    ["main-content"; "footnote-label"; "jt-search-modal"; "jt-search-input";
+     "jt-search-results"; "jt-search-open"; "jt-theme-toggle"]
+
+let init_render_state ~page_title_id c _doc =
   C.State.set c rstate
     (Some
        {
-         ids = String_set.of_list ["main-content"; "footnote-label"; "jt-search-modal";
-           "jt-search-input"; "jt-search-results"; "jt-search-open"; "jt-theme-toggle"];
+         ids = (match page_title_id with None -> reserved_heading_ids
+           | Some id -> String_set.add id reserved_heading_ids);
          toc_rev = [];
          has_mermaid = false;
          footnote_order = [];
          footnotes = String_map.empty;
        })
 
-let unique_heading_id (st : render_state) (base_id : string) : string =
+let available_heading_id ids (base_id : string) : string =
   let clean = if base_id = "" then "section" else base_id in
   let rec loop n =
     let candidate =
       if n = 0 then clean else clean ^ "-" ^ Int.to_string n
     in
-    if String_set.mem candidate st.ids then loop (n + 1)
-    else begin
-      st.ids <- String_set.add candidate st.ids;
-      candidate
-    end
+    if String_set.mem candidate ids then loop (n + 1) else candidate
   in
   loop 0
+
+let unique_heading_id (st : render_state) base_id =
+  let id = available_heading_id st.ids base_id in
+  st.ids <- String_set.add id st.ids;
+  id
+
+let heading_id_base h =
+  match Block.Heading.id h with
+  | Some (`Auto id | `Id id) -> id
+  | None -> String.trim (inline_to_plain_string (Block.Heading.inline h))
 
 let sanitize_footnote_slug (key : string) : string =
   let raw =
@@ -931,8 +942,11 @@ let render_table c (t : Block.Table.t) =
       ~inline_ext_default:(fun _ node -> Some node)
       ~inline:(fun _ -> function
         | Inline.Code_span (span, meta) ->
-            let text = unescape_pipes (Inline.Code_span.code span) in
-            Mapper.ret (Inline.Code_span (Inline.Code_span.of_string ~meta text, meta))
+            let layout = List.map (fun (padding, (text, text_meta)) ->
+                (padding, (unescape_pipes text, text_meta))) (Inline.Code_span.code_layout span) in
+            let span = Inline.Code_span.make
+                ~backtick_count:(Inline.Code_span.backtick_count span) layout in
+            Mapper.ret (Inline.Code_span (span, meta))
         | _ -> Mapper.default) ()
   in
   let render_cell col =
@@ -1046,12 +1060,7 @@ let render_block c = function
       let lvl = Block.Heading.level h in
       let lvl_str = Int.to_string lvl in
       let plain = String.trim (inline_to_plain_string (Block.Heading.inline h)) in
-      let raw_id =
-        match Block.Heading.id h with
-        | Some (`Auto id | `Id id) -> id
-        | None -> plain
-      in
-      let id = unique_heading_id st raw_id in
+      let id = unique_heading_id st (heading_id_base h) in
       if lvl = 2 || lvl = 3 then
         st.toc_rev <- { Domain.level = lvl; id; text = plain } :: st.toc_rev;
       C.string c "<h";
@@ -1279,28 +1288,32 @@ let remove_page_title title doc =
   let matches h = Block.Heading.level h = 1 &&
     String.trim (inline_to_plain_string (Block.Heading.inline h)) = String.trim title in
   let rec leading = function
-    | (Block.Blank_line _ as blank) :: rest -> blank :: leading rest
-    | Block.Heading (h, _) :: rest when matches h -> rest
-    | other -> other
+    | (Block.Blank_line _ as blank) :: rest ->
+        let rest, heading = leading rest in (blank :: rest, heading)
+    | Block.Heading (h, _) :: rest when matches h -> (rest, Some h)
+    | other -> (other, None)
   in
-  let body = match Doc.block doc with
-    | Block.Blocks (blocks, meta) -> Block.Blocks (leading blocks, meta)
-    | Block.Heading (h, meta) when matches h -> Block.Blocks ([], meta)
-    | block -> block
+  let body, heading = match Doc.block doc with
+    | Block.Blocks (blocks, meta) ->
+        let blocks, heading = leading blocks in (Block.Blocks (blocks, meta), heading)
+    | Block.Heading (h, meta) when matches h -> (Block.Blocks ([], meta), Some h)
+    | block -> (block, None)
   in
-  Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) body
+  (Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) body, heading)
 
 let render ?heading_base ?page_title (md : string) : rendered_markdown =
   let parsed = Doc.of_string ~heading_auto_ids:true ~strict:false md in
   let transformed = transform_doc md parsed in
-  let transformed = match page_title with
-    | None -> transformed | Some title -> remove_page_title title transformed in
+  let transformed, title_heading = match page_title with
+    | None -> (transformed, None) | Some title -> remove_page_title title transformed in
+  let page_title_id = Option.map (fun h ->
+      available_heading_id reserved_heading_ids (heading_id_base h)) title_heading in
   let transformed = match heading_base with
     | None -> transformed
     | Some base -> normalize_headings base transformed in
   let captured_state : render_state option ref = ref None in
   let init_context c d =
-    init_render_state c d;
+    init_render_state ~page_title_id c d;
     captured_state := Some (C.State.get c rstate)
   in
   let renderer =
@@ -1311,10 +1324,11 @@ let render ?heading_base ?page_title (md : string) : rendered_markdown =
   let html = strip_trailing_newline raw_html in
   let plain_text = String.trim (block_to_plain_string (Doc.block transformed)) in
   match !captured_state with
-  | None -> { html; toc = []; plain_text; has_mermaid = false }
+  | None -> { html; page_title_id; toc = []; plain_text; has_mermaid = false }
   | Some st ->
       {
         html;
+        page_title_id;
         toc = List.rev st.toc_rev;
         plain_text;
         has_mermaid = st.has_mermaid;

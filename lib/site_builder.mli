@@ -45,7 +45,8 @@ val build_series_info :
     Sites with custom CSS/JavaScript retain the full theme and its public tokens,
     since their dynamic selectors cannot be determined from initial HTML.
     Built-in menus expose closed/uninitialized state attributes in initial HTML
-    so their dynamic rules survive the default per-page CSS optimization. *)
+    so their dynamic rules survive the default per-page CSS optimization.
+    Article, document and home titles inherit the removed Markdown H1 anchor. *)
 val render_blog_home :
   ?stylesheet:string ->
   config:Domain.site_config ->
