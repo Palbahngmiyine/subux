@@ -5,6 +5,7 @@ module String_map = Map.Make (String)
 
 type rendered_markdown = {
   html : string;
+  page_title_id : string option;
   toc : Domain.toc_item list;
   plain_text : string;
   has_mermaid : bool;
@@ -649,31 +650,43 @@ type render_state = {
 
 let rstate : render_state C.State.t = C.State.make ()
 
-let init_render_state c _doc =
+let reserved_heading_ids = String_set.of_list
+    ["main-content"; "footnote-label"; "jt-search-modal"; "jt-search-input";
+     "jt-search-results"; "jt-search-open"; "jt-theme-toggle";
+     "jt-main-nav"; "jt-menu-toggle"; "jt-sidebar"; "jt-sidebar-toggle";
+     "jt-sidebar-backdrop"; "jt-outline"; "jt-outline-toggle"]
+
+let init_render_state ~page_title_id c _doc =
   C.State.set c rstate
     (Some
        {
-         ids = String_set.of_list ["main-content"; "footnote-label"; "jt-search-modal";
-           "jt-search-input"; "jt-search-results"; "jt-search-open"; "jt-theme-toggle"];
+         ids = (match page_title_id with None -> reserved_heading_ids
+           | Some id -> String_set.add id reserved_heading_ids);
          toc_rev = [];
          has_mermaid = false;
          footnote_order = [];
          footnotes = String_map.empty;
        })
 
-let unique_heading_id (st : render_state) (base_id : string) : string =
+let available_heading_id ids (base_id : string) : string =
   let clean = if base_id = "" then "section" else base_id in
   let rec loop n =
     let candidate =
       if n = 0 then clean else clean ^ "-" ^ Int.to_string n
     in
-    if String_set.mem candidate st.ids then loop (n + 1)
-    else begin
-      st.ids <- String_set.add candidate st.ids;
-      candidate
-    end
+    if String_set.mem candidate ids then loop (n + 1) else candidate
   in
   loop 0
+
+let unique_heading_id (st : render_state) base_id =
+  let id = available_heading_id st.ids base_id in
+  st.ids <- String_set.add id st.ids;
+  id
+
+let heading_id_base h =
+  match Block.Heading.id h with
+  | Some (`Auto id | `Id id) -> id
+  | None -> String.trim (inline_to_plain_string (Block.Heading.inline h))
 
 let sanitize_footnote_slug (key : string) : string =
   let raw =
@@ -919,6 +932,28 @@ let render_list_item ~tight c (i, _) =
   close_li ()
 
 let render_table c (t : Block.Table.t) =
+  let unescape_pipes s =
+    let rec loop i acc =
+      if i >= String.length s then String.concat "" (List.rev acc)
+      else if s.[i] = '\\' && i + 1 < String.length s && s.[i + 1] = '|'
+      then loop (i + 2) ("|" :: acc)
+      else loop (i + 1) (String.make 1 s.[i] :: acc)
+    in loop 0 []
+  in
+  let mapper = Mapper.make
+      ~inline_ext_default:(fun _ node -> Some node)
+      ~inline:(fun _ -> function
+        | Inline.Code_span (span, meta) ->
+            let layout = List.map (fun (padding, (text, text_meta)) ->
+                (padding, (unescape_pipes text, text_meta))) (Inline.Code_span.code_layout span) in
+            let span = Inline.Code_span.make
+                ~backtick_count:(Inline.Code_span.backtick_count span) layout in
+            Mapper.ret (Inline.Code_span (span, meta))
+        | _ -> Mapper.default) ()
+  in
+  let render_cell col =
+    C.inline c (Option.value ~default:col (Mapper.map_inline mapper col))
+  in
   let align_attr = function
     | None -> ""
     | Some `Left -> " align=\"left\""
@@ -932,7 +967,7 @@ let render_table c (t : Block.Table.t) =
         C.string c tag;
         C.string c (align_attr (fst a));
         C.byte c '>';
-        C.inline c col;
+        render_cell col;
         C.string c "</";
         C.string c tag;
         C.string c ">\n";
@@ -941,7 +976,7 @@ let render_table c (t : Block.Table.t) =
         C.byte c '<';
         C.string c tag;
         C.byte c '>';
-        C.inline c col;
+        render_cell col;
         C.string c "</";
         C.string c tag;
         C.string c ">\n";
@@ -1027,12 +1062,7 @@ let render_block c = function
       let lvl = Block.Heading.level h in
       let lvl_str = Int.to_string lvl in
       let plain = String.trim (inline_to_plain_string (Block.Heading.inline h)) in
-      let raw_id =
-        match Block.Heading.id h with
-        | Some (`Auto id | `Id id) -> id
-        | None -> plain
-      in
-      let id = unique_heading_id st raw_id in
+      let id = unique_heading_id st (heading_id_base h) in
       if lvl = 2 || lvl = 3 then
         st.toc_rev <- { Domain.level = lvl; id; text = plain } :: st.toc_rev;
       C.string c "<h";
@@ -1057,6 +1087,20 @@ let render_block c = function
         Option.map fst (Option.bind info Block.Code_block.language_of_info_string)
       in
       let lines = List.map fst (Block.Code_block.code cb) in
+      let is_diagram = match lang_opt with
+        | Some lang -> List.mem (String.lowercase_ascii lang) [ "mermaid"; "mmd" ]
+        | None -> false
+      in
+      if not is_diagram then begin
+        C.string c "<div class=\"sx-code-block\">";
+        (match lang_opt with
+         | None -> ()
+         | Some lang ->
+             C.string c "<span class=\"sx-code-label\" aria-hidden=\"true\">";
+             C.string c (escape_html_text lang);
+             C.string c "</span>");
+        C.string c "<button type=\"button\" class=\"sx-code-copy\" aria-label=\"Copy code\"></button>"
+      end;
       begin match lang_opt with
       | Some lang when String.lowercase_ascii lang = "mermaid" || String.lowercase_ascii lang = "mmd" ->
           st.has_mermaid <- true;
@@ -1096,6 +1140,7 @@ let render_block c = function
             lines;
           C.string c "</code></pre>\n"
       end;
+      if not is_diagram then C.string c "</div>\n";
       true
   | Block.List (l, _) ->
       let tight = Block.List'.tight l in
@@ -1151,11 +1196,43 @@ let render_footnotes c (st : render_state) =
             C.string c "<li id=\"";
             C.string c (escape_html_text fn_id);
             C.string c "\">\n";
-            C.block c (Block.Footnote.block entry.fn);
-            C.string c "<a href=\"#";
-            C.string c (escape_html_text ref_id);
-            C.string c
-              "\" data-footnote-backref class=\"data-footnote-backref\" aria-label=\"Back to content\">↩</a>\n</li>\n")
+            let backref () =
+              List.iter
+                (fun occurrence ->
+                  let suffix =
+                    if occurrence = 1 then ""
+                    else "-" ^ Int.to_string occurrence
+                  in
+                  C.string c " <a href=\"#";
+                  C.string c (escape_html_text (ref_id ^ suffix));
+                  C.string c
+                    "\" data-footnote-backref class=\"data-footnote-backref\" aria-label=\"Back to reference ";
+                  C.string c (Int.to_string entry.index ^ suffix);
+                  C.string c "\">↩";
+                  if occurrence > 1 then begin
+                    C.string c "<sup>";
+                    C.string c (Int.to_string occurrence);
+                    C.string c "</sup>"
+                  end;
+                  C.string c "</a>")
+                (List.init entry.ref_count (fun i -> i + 1))
+            in
+            let rec body = function
+              | Block.Paragraph (p, _) ->
+                  C.string c "<p>";
+                  C.inline c (Block.Paragraph.inline p);
+                  backref ();
+                  C.string c "</p>\n"
+              | Block.Blocks (bs, _) ->
+                  let rec blocks = function
+                    | [] -> backref ()
+                    | [last] -> body last
+                    | first :: rest -> C.block c first; blocks rest
+                  in blocks bs
+              | block -> C.block c block; backref ()
+            in
+            body (Block.Footnote.block entry.fn);
+            C.string c "</li>\n")
       st.footnote_order;
     C.string c "</ol></section>\n"
   end
@@ -1209,15 +1286,36 @@ let normalize_headings base doc =
     | other -> other) (Doc.defs doc) in
   Doc.make ~nl:(Doc.nl doc) ~defs body
 
-let render ?heading_base (md : string) : rendered_markdown =
+let remove_page_title title doc =
+  let matches h = Block.Heading.level h = 1 &&
+    String.trim (inline_to_plain_string (Block.Heading.inline h)) = String.trim title in
+  let rec leading = function
+    | (Block.Blank_line _ as blank) :: rest ->
+        let rest, heading = leading rest in (blank :: rest, heading)
+    | Block.Heading (h, _) :: rest when matches h -> (rest, Some h)
+    | other -> (other, None)
+  in
+  let body, heading = match Doc.block doc with
+    | Block.Blocks (blocks, meta) ->
+        let blocks, heading = leading blocks in (Block.Blocks (blocks, meta), heading)
+    | Block.Heading (h, meta) when matches h -> (Block.Blocks ([], meta), Some h)
+    | block -> (block, None)
+  in
+  (Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) body, heading)
+
+let render ?heading_base ?page_title (md : string) : rendered_markdown =
   let parsed = Doc.of_string ~heading_auto_ids:true ~strict:false md in
   let transformed = transform_doc md parsed in
+  let transformed, title_heading = match page_title with
+    | None -> (transformed, None) | Some title -> remove_page_title title transformed in
+  let page_title_id = Option.map (fun h ->
+      available_heading_id reserved_heading_ids (heading_id_base h)) title_heading in
   let transformed = match heading_base with
     | None -> transformed
     | Some base -> normalize_headings base transformed in
   let captured_state : render_state option ref = ref None in
   let init_context c d =
-    init_render_state c d;
+    init_render_state ~page_title_id c d;
     captured_state := Some (C.State.get c rstate)
   in
   let renderer =
@@ -1228,10 +1326,11 @@ let render ?heading_base (md : string) : rendered_markdown =
   let html = strip_trailing_newline raw_html in
   let plain_text = String.trim (block_to_plain_string (Doc.block transformed)) in
   match !captured_state with
-  | None -> { html; toc = []; plain_text; has_mermaid = false }
+  | None -> { html; page_title_id; toc = []; plain_text; has_mermaid = false }
   | Some st ->
       {
         html;
+        page_title_id;
         toc = List.rev st.toc_rev;
         plain_text;
         has_mermaid = st.has_mermaid;

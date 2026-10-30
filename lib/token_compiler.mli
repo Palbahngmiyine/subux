@@ -23,6 +23,9 @@ val inline_stylesheet : string -> string
     Mermaid and interactive states, then optimize its inline stylesheet. *)
 val critical_stylesheet : html:string -> string -> string
 
+(** Compile token-based components, including viewport-anchored mobile
+    navigation, scrollable search dialogs and viewport-bounded, scrollable
+    mobile outlines with text-link colors. *)
 val compile_full_stylesheet :
   ?prefix:string ->
   ?area_tone:Domain.area_tone ->

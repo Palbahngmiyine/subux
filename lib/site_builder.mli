@@ -41,7 +41,12 @@ val build_series_info :
   Domain.series_info option
 
 (** Renderers accept the compiled theme for inlining/fingerprinting. Without
-    [stylesheet], standalone calls link the compatible external theme alias. *)
+    [stylesheet], standalone calls link the compatible external theme alias.
+    Sites with custom CSS/JavaScript retain the full theme and its public tokens,
+    since their dynamic selectors cannot be determined from initial HTML.
+    Built-in menus expose closed/uninitialized state attributes in initial HTML
+    so their dynamic rules survive the default per-page CSS optimization.
+    Article, document and home titles inherit the removed Markdown H1 anchor. *)
 val render_blog_home :
   ?stylesheet:string ->
   config:Domain.site_config ->
