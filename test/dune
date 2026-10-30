@@ -1,12 +1,9 @@
 (test
  (name ssg_test)
+ (modules ssg_test cloudflare_cli)
  (modes native)
- (libraries subux_lib)
+ (libraries subux_lib unix)
  (deps (file ../design/tokens.json))
- (flags (:standard -w +a-4-40-42-44 -warn-error +a)))
-
-(rule
- (alias runtest)
- (deps cloudflare_cli.sh ../design/tokens.json)
+ (flags (:standard -w +a-4-40-42-44 -warn-error +a))
  (action
-  (run sh %{dep:cloudflare_cli.sh} %{exe:../bin/main.exe} %{dep:../design/tokens.json})))
+  (run %{test} %{exe:../bin/main.exe} %{dep:../design/tokens.json})))

@@ -704,4 +704,6 @@ let () =
   test_color_tokens_and_site_builder ();
   test_adapters ();
   test_lighthouse_tasks ();
+  if Array.length Sys.argv <> 3 then fail "Expected CLI executable and tokens path";
+  Cloudflare_cli.run ~executable:Sys.argv.(1) ~tokens_path:Sys.argv.(2);
   print_endline "\nALL TESTS PASSED!"
