@@ -199,8 +199,6 @@ type site_config = {
   sidebar : sidebar_group list;
   auto_sidebar : bool;
   enable_search : bool;
-  custom_js : string option; (** Optional trusted module script content, loaded by the CLI. *)
-  custom_css : string option; (** Optional trusted stylesheet content, loaded by the CLI. *)
   inline_css : bool; (** Inline the compiled theme in each page; defaults to true. *)
 }
 

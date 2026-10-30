@@ -1,8 +1,7 @@
 (** Safe, pure functional YAML frontmatter parser.
     Enforces strict YAML security guarantees (rejecting executable tags, aliases,
     cyclic anchors, unclosed fences, and non-mapping roots) while supporting
-    ambiguous colon repair, punctuation in plain scalars, quoted inline-list
-    values, and nested hero/features blocks for documentation home pages. *)
+    ambiguous colon repair and nested hero/features blocks for documentation home pages. *)
 
 type parsed_markdown = {
   meta : Domain.frontmatter_meta;
