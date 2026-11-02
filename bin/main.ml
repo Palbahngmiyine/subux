@@ -231,6 +231,8 @@ let parse_config_json (base : site_config) (raw_json : string) :
           description = get_str "description" base.description;
           lang = get_str "lang" base.lang;
           base_url = get_str "baseUrl" base.base_url;
+          auto_sidebar = (match List.assoc_opt "autoSidebar" fields with
+            | Some (Json_parser.Bool b) -> b | _ -> base.auto_sidebar);
           enable_search = (match List.assoc_opt "enableSearch" fields with
             | Some (Json_parser.Bool b) -> b | _ -> base.enable_search);
           inline_css = (match List.assoc_opt "inlineCss" fields with
