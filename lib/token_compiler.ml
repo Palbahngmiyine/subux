@@ -765,6 +765,9 @@ a.jt-nav-link:hover, a.jt-nav-link[aria-current='page'] {
   color: var(--sx-color-text);
   background-color: var(--sx-color-surface-muted);
 }
+a.jt-nav-link[aria-current='page'] {
+  font-weight: 600;
+}
 .keycap-pill {
   background-color: var(--sx-active-fill);
   color: var(--sx-on-active-fill);

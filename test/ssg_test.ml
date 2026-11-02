@@ -168,6 +168,17 @@ let test_frontmatter () =
     match Frontmatter.parse ("---\ntitle: " ^ value ^ "\n---\n") with
     | Ok _ -> fail "malformed or unsafe title accepted"
     | Error _ -> ()) [ "'unclosed"; "\"unclosed"; "[one, two"; "Name &anchor" ];
+  List.iter (fun nested ->
+    match Frontmatter.parse ("---\n" ^ nested ^ "\n---\n") with
+    | Ok _ -> fail ("malformed nested YAML accepted: " ^ nested)
+    | Error _ -> ())
+    [
+      "hero:\n  name: \"Landing";
+      "hero:\n  tagline: 'Unclosed";
+      "features:\n  - title: \"Unfinished\n    details: ok";
+      "tags:\n  - \"unfinished";
+      "tags:\n  - [unclosed";
+    ];
   print_endline "PASS: Frontmatter security and parsing tests"
 
 (* ==========================================================================
@@ -850,6 +861,12 @@ let test_lighthouse_tasks () =
     "default outline uses the link token with a non-color indicator";
   let docs_html = find (compile default_docs_config
       [{source with collection="contents"; rel_path="contents/guide.md"}]) "contents/guide/index.html" in
+  assert_contains css "a.jt-nav-link[aria-current='page'] {\n  font-weight: 600;\n}"
+    "active navbar link includes a non-color weight indicator";
+  assert_contains docs_html "if (event.target.closest('a[href]')) closeMenu();"
+    "mobile navigation closes when a link is activated";
+  assert_contains docs_html "window.addEventListener('hashchange', closeMenu);"
+    "mobile navigation closes on same-document hash navigation";
   assert_contains docs_html ".jt-navbar:has(" "critical CSS retains the open-menu header override";
   assert_contains docs_html "overflow-y:auto" "critical CSS retains scrollable dialog rules";
   assert_contains css "max-height: calc(100dvh - 7rem - var(--sx-space-2)); overflow-y: auto"

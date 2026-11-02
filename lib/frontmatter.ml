@@ -389,11 +389,27 @@ let parse_yaml_lines file lines =
                     collect_indented_block 0 [] rest
                   in
                   let* () =
+                    let nested_scalar t =
+                      if String.starts_with ~prefix:"-" t then
+                        let item =
+                          String.trim (String.sub t 1 (String.length t - 1))
+                        in
+                        match split_key_value item with
+                        | Some (_k, v) -> v
+                        | None -> strip_inline_comment item
+                      else
+                        match split_key_value t with
+                        | Some (_k, v) -> v
+                        | None -> strip_inline_comment t
+                    in
                     let has_unsafe =
                       List.exists
                         (fun (_ind, t) ->
+                          let v = nested_scalar t in
                           has_unsafe_yaml_token t
-                          || has_unbalanced_brackets_or_quotes t)
+                          || has_unsafe_yaml_token v
+                          || has_unbalanced_brackets_or_quotes t
+                          || has_unbalanced_brackets_or_quotes v)
                         block_lines
                     in
                     if has_unsafe then

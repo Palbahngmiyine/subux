@@ -320,6 +320,11 @@ let jt_runtime_script : Html.node =
   const menu = document.getElementById('jt-main-nav');
   const menuButton = document.getElementById('jt-menu-toggle');
   if (menu && menuButton) {
+    const closeMenu = () => {
+      menu.dataset.open = 'false';
+      menuButton.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    };
     menu.dataset.ready = 'true';
     menuButton.addEventListener('click', () => {
       const open = menuButton.getAttribute('aria-expanded') !== 'true';
@@ -327,11 +332,11 @@ let jt_runtime_script : Html.node =
       menu.dataset.open = String(open);
       document.body.style.overflow = open ? 'hidden' : '';
     });
-    matchMedia('(min-width: 960px)').addEventListener('change', () => {
-      menu.dataset.open = 'false';
-      menuButton.setAttribute('aria-expanded', 'false');
-      document.body.style.overflow = '';
+    menu.addEventListener('click', event => {
+      if (event.target.closest('a[href]')) closeMenu();
     });
+    window.addEventListener('hashchange', closeMenu);
+    matchMedia('(min-width: 960px)').addEventListener('change', closeMenu);
   }
   const sidebar = document.getElementById('jt-sidebar');
   const sidebarButton = document.getElementById('jt-sidebar-toggle');
