@@ -153,6 +153,21 @@ let test_frontmatter () =
   | Error _ -> ()
   end;
 
+  List.iter (fun title ->
+    match Frontmatter.parse ("---\ntitle: " ^ title ^ " # comment\n---\nBody") with
+    | Error e -> fail ("plain scalar: " ^ error_to_string e)
+    | Ok doc -> assert_true (doc.meta.title = Some title) "plain title and comment")
+    [ "Rob Pike's 5 Rules of Programming"; "A [plain] title" ];
+  begin match Frontmatter.parse
+      "---\ntags: [one, \"two # literal\", 'three # literal'] # comment\n---\n" with
+  | Error e -> fail ("quoted inline list: " ^ error_to_string e)
+  | Ok doc -> assert_true (doc.meta.tags = ["one"; "two # literal"; "three # literal"])
+      "quoted list values retain hash after whitespace"
+  end;
+  List.iter (fun value ->
+    match Frontmatter.parse ("---\ntitle: " ^ value ^ "\n---\n") with
+    | Ok _ -> fail "malformed or unsafe title accepted"
+    | Error _ -> ()) [ "'unclosed"; "\"unclosed"; "[one, two"; "Name &anchor" ];
   print_endline "PASS: Frontmatter security and parsing tests"
 
 (* ==========================================================================
@@ -227,8 +242,23 @@ let test_markdown_rendering () =
   assert_contains html_gfm "<input type=\"checkbox\" checked disabled>"
     "2.5 task list checkbox";
   assert_contains html_gfm "<del>Removed</del>" "2.5 strikethrough";
+  let table_pipes = render_html
+      "| Expression |\n| --- |\n| **`a \\|\\| <b>`** |\n\nOutside: `a \\| b`" in
+  assert_contains table_pipes "<strong><code>a || &lt;b&gt;</code></strong>"
+    "2.5 table code unescapes delimiter pipes and preserves escaping";
+  assert_contains table_pipes "<code>a \\| b</code>"
+    "2.5 code outside tables keeps literal backslashes";
 
   (* 2.6 syntax highlighting preserves aliases and leaves text and Mermaid fences untouched *)
+  let padded_table = render_html
+      "| Code |\n| --- |\n| `  foo  ` |\n| `  a \\| b  ` |\n| `   ` |\n| `` `foo` `` |\n" in
+  assert_contains padded_table "<code> foo </code>"
+    "table code normalizes surrounding spaces only once";
+  assert_contains padded_table "<code> a | b </code>"
+    "table pipe unescaping preserves significant surrounding spaces";
+  assert_contains padded_table "<code>   </code>" "all-space table code stays intact";
+  assert_contains padded_table "<code>`foo`</code>" "table code retains literal backticks";
+
   let html_code =
     render_html
       "```sh\necho \"hello\"\n```\n\n```yml\nname: test\n```\n\n```json\n{\"ready\":true}\n```\n\n```text\nplain <text>\n```\n\n```mermaid\ngraph LR; A --> B\n```"
@@ -243,6 +273,12 @@ let test_markdown_rendering () =
     "2.6 text fence untouched";
   assert_contains html_code "<code class=\"language-mermaid\">graph LR; A --> B"
     "2.6 mermaid fence untouched";
+  assert_contains html_code "class=\"sx-code-block\"" "2.6 themeable code wrapper";
+  assert_contains html_code "class=\"sx-code-copy\" aria-label=\"Copy code\""
+    "2.6 accessible copy control";
+  let hostile_fence = render_html "```x\"<img\n<script>alert(1)</script>\n```" in
+  assert_not_contains hostile_fence "<img" "2.6 language label escaped";
+  assert_not_contains hostile_fence "<script>" "2.6 code text escaped";
 
   (* 2.7 footnotes retain target links and plain-text hover content inside callouts *)
   let html_fn =
@@ -255,6 +291,66 @@ let test_markdown_rendering () =
   assert_contains html_fn "id=\"user-content-fn-1\"" "2.7 footnote target id";
   assert_contains html_fn "href=\"#user-content-fnref-1\""
     "2.7 footnote backref";
+  assert_contains html_fn "class=\"sr-only\">각주</h2>"
+    "2.7 accessible footnote heading";
+  assert_contains html_fn "aria-describedby=\"footnote-label\""
+    "2.7 reference described by footnote heading";
+  assert_contains html_fn "↩</a></p>" "2.7 backlink stays in the note paragraph";
+
+  let titled = Markdown.render ~heading_base:2 ~page_title:"Page title"
+      "\n# **Page title**\n\n## Section\n\nBody" in
+  assert_not_contains titled.html "Page title" "template owns a matching leading title";
+  assert_true (titled.page_title_id = Some "page-title") "removed H1 keeps its generated anchor";
+  assert_contains titled.html "<h2 id=\"section\">" "body headings retain their hierarchy";
+  assert_contains titled.html "Body" "removing a duplicate title preserves body text";
+  assert_not_contains (Markdown.render ~page_title:"Page title" "Page title\n==========\n").html
+    "<h1" "Setext duplicate titles are removed";
+  assert_contains (Markdown.render ~heading_base:2 ~page_title:"Other" "# Page title").html
+    "Page title" "a different body heading is preserved";
+  assert_contains (Markdown.render ~page_title:"Page title" "Intro\n\n# Page title").html
+    "<h1" "later matching headings are not removed";
+  assert_true ((Markdown.render ~page_title:"Page title" "Page title\n==========\n").page_title_id
+      = Some "page-title") "Setext title keeps its generated anchor";
+  assert_true ((Markdown.render ~page_title:"main-content" "# main-content").page_title_id
+      = Some "main-content-1") "title anchors avoid reserved template IDs";
+  List.iter (fun control_id ->
+    let headings = Markdown.render ("## " ^ control_id ^ "\n\n## " ^ control_id) in
+    assert_contains headings.html ("id=\"" ^ control_id ^ "-1\"")
+      "body headings avoid navigation and outline control IDs";
+    assert_contains headings.html ("id=\"" ^ control_id ^ "-2\"")
+      "repeated control-like headings keep unique anchors";
+    assert_not_contains headings.html ("id=\"" ^ control_id ^ "\"")
+      "body headings never claim a template control ID";
+    let titled = Markdown.render ~page_title:control_id
+        ("# " ^ control_id ^ "\n\n## " ^ control_id) in
+    assert_true (titled.page_title_id = Some (control_id ^ "-1"))
+      "removed titles also avoid control IDs";
+    assert_contains titled.html ("id=\"" ^ control_id ^ "-2\"")
+      "body headings do not reuse the removed title anchor")
+    ["jt-main-nav"; "jt-menu-toggle"; "jt-sidebar"; "jt-sidebar-toggle";
+     "jt-sidebar-backdrop"; "jt-outline"; "jt-outline-toggle"];
+  assert_true ((Markdown.render ~page_title:"Other" "# Page title").page_title_id = None)
+    "nonmatching titles do not allocate a template anchor";
+  assert_true ((Markdown.render ~page_title:"Page title" "Intro\n\n# Page title").page_title_id = None)
+    "later headings do not allocate a template anchor";
+
+  let repeated_fn =
+    render_html "First[^note] then[^note] and last[^note].\n\n[^note]: [Unsafe](javascript:alert(1))."
+  in
+  List.iter
+    (fun suffix ->
+      assert_contains repeated_fn ("id=\"user-content-fnref-note" ^ suffix ^ "\"")
+        "2.7 repeated reference has a unique target";
+      assert_contains repeated_fn ("href=\"#user-content-fnref-note" ^ suffix ^ "\"")
+        "2.7 every reference has a backlink")
+    [ ""; "-2"; "-3" ];
+  assert_contains repeated_fn "aria-label=\"Back to reference 1-2\">↩<sup>2</sup></a>"
+    "2.7 repeated backlink identifies its reference";
+  assert_contains repeated_fn "↩<sup>3</sup></a></p>"
+    "2.7 all backlinks stay in the final paragraph";
+  assert_not_contains repeated_fn "#user-content-fnref-note-4"
+    "2.7 no backlink to a nonexistent reference";
+  assert_not_contains repeated_fn "javascript:" "2.7 repeated note keeps URL sanitization";
 
   print_endline
     "PASS: Markdown rendering tests"
@@ -485,11 +581,40 @@ let test_color_tokens_and_site_builder () =
       assert_contains doc1_art.content "class=\"jt-sidebar-link active\""
         "4.3 active sidebar item";
       assert_contains doc1_art.content "On this page" "4.3 right outline TOC";
+      List.iter (fun selector -> assert_contains doc1_art.content selector
+          "default critical CSS retains built-in menu states")
+        [".jt-nav-links[data-open="; ".jt-sidebar[data-ready="; ".jt-outline[data-open="];
       assert_contains doc1_art.content "href=\"#핵심-원칙\""
         "4.3 TOC heading anchor";
       assert_contains doc1_art.content "Next page" "4.3 auto next page pager"
   end;
 
+  (* A site override must be emitted as a separate stylesheet after the theme,
+     for every mode; CSS content must never be interpolated into HTML. *)
+  List.iter (fun mode ->
+    let css = "/* </style><script> */ .jt-hero { max-width: 60rem; }" in
+    let config = { default_docs_config with mode; custom_css = Some css; custom_js = Some "/* </script> */" } in
+    match Site_builder.compile_site ~config ~tokens_json [] with
+    | Error e -> fail ("custom stylesheet: " ^ error_to_string e)
+    | Ok plan ->
+        let custom = List.find_opt (fun (a : Site_builder.output_artifact) ->
+          a.out_path = "assets/custom.css") plan.artifacts in
+        assert_true (Option.map (fun (a : Site_builder.output_artifact) -> a.content) custom = Some css)
+          "custom CSS emitted unchanged";
+        assert_true (List.exists (fun (a : Site_builder.output_artifact) ->
+          a.out_path = "assets/custom.js" && a.content = "/* </script> */") plan.artifacts)
+          "custom module emitted unchanged";
+        List.iter (fun (a : Site_builder.output_artifact) ->
+          if Filename.check_suffix a.out_path ".html" then begin
+            assert_contains a.content "/assets/custom.css" "custom CSS linked";
+            assert_contains a.content "src=\"/assets/custom.js\"" "custom module linked";
+            assert_not_contains a.content "/* </script> */" "custom module outside HTML";
+            assert_not_contains a.content "<script> */" "custom CSS outside HTML";
+            assert_contains a.content ".hljs-keyword" "custom scripts retain dynamic syntax styles";
+            assert_contains a.content "--sx-color-callout-todo:" "custom CSS retains public tokens";
+            assert_contains a.content ".jt-nav-links[data-open=" "custom scripts retain menu state styles"
+          end) plan.artifacts)
+    [ Blog_mode; Docs_mode; Unified_mode ];
   print_endline
     "PASS: Design tokens & Site_builder (Blog_mode + Docs_mode) tests"
 
@@ -568,6 +693,73 @@ let test_adapters () =
     "5.7 reject file/directory conflicts";
   expect_error (adapt []) "5.8 require home and 404 artifacts";
   print_endline "PASS: Static and Cloudflare adapter tests"
+(* Exercise CLI I/O boundaries with real files and a bounded child process.
+   In particular a FIFO must be rejected before opening it for reading. *)
+let test_cli_assets () =
+  let cli = Unix.realpath Sys.argv.(1) in
+  let input = Filename.temp_file "subux-assets-" "" in
+  Sys.remove input;
+  Unix.mkdir input 0o700;
+  let outside = Filename.temp_file "subux-outside-" ".css" in
+  let path name = Filename.concat input name in
+  let write name content =
+    Out_channel.with_open_bin (path name) (fun ch -> Out_channel.output_string ch content)
+  in
+  let cleanup () =
+    List.iter (fun name -> try Sys.remove (path name) with Sys_error _ -> ())
+      [ "subux.json"; "post.md"; "site.css"; "site.js"; "internal.css";
+        "external.css"; "blocked.pipe"; "output.log" ];
+    Sys.remove outside;
+    Unix.rmdir input
+  in
+  let results = Fun.protect ~finally:cleanup (fun () ->
+    write "post.md" "# Asset fixture\n";
+    write "site.css" "/* regular stylesheet */";
+    write "site.js" "/* regular module */";
+    let run key value expected label =
+      write "subux.json" (Json_parser.to_string (Json_parser.Object [ key, value ]));
+      let output = Unix.openfile (path "output.log") [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+      let pid = Unix.create_process cli
+          [| cli; "check"; "-i"; input; "--tokens"; "../design/tokens.json" |]
+          Unix.stdin output output in
+      Unix.close output;
+      let rec wait remaining =
+        let finished, status = Unix.waitpid [ Unix.WNOHANG ] pid in
+        if finished <> 0 then Some status
+        else if remaining = 0 then begin
+          Unix.kill pid Sys.sigkill;
+          ignore (Unix.waitpid [] pid);
+          None
+        end else begin
+          ignore (Unix.select [] [] [] 0.01);
+          wait (remaining - 1)
+        end
+      in
+      let status = wait 200 in
+      let log = In_channel.with_open_bin (path "output.log") In_channel.input_all in
+      (label, key, status, log, expected)
+    in
+    let posix = Sys.os_type <> "Win32" in
+    if posix then begin
+      Unix.symlink (path "site.css") (path "internal.css");
+      Unix.symlink outside (path "external.css");
+      Unix.mkfifo (path "blocked.pipe") 0o600
+    end;
+    List.concat_map (fun key ->
+      [ run key (Json_parser.String (if key = "customCss" then "site.css" else "site.js")) 0 "regular asset";
+        run key (Json_parser.Bool true) 1 "invalid asset type";
+        run key (Json_parser.String "../outside.css") 1 "asset traversal";
+        run key (Json_parser.String outside) 1 "absolute asset path" ]
+      @ if posix then
+          [ run key (Json_parser.String "internal.css") 0 "internal asset symlink";
+            run key (Json_parser.String "external.css") 1 "external asset symlink";
+            run key (Json_parser.String "blocked.pipe") 1 "FIFO asset must not block" ]
+        else []) [ "customCss"; "customJs" ])
+  in
+  List.iter (fun (label, key, status, log, expected) ->
+    assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
+    if expected <> 0 then assert_contains log key (label ^ " identifies the asset field")) results;
+  print_endline "PASS: CLI custom asset boundary tests"
 
 let test_lighthouse_tasks () =
   let tokens_json = In_channel.with_open_text "../design/tokens.json" In_channel.input_all in
@@ -602,6 +794,8 @@ let test_lighthouse_tasks () =
   assert_not_contains css "@import" "101 no render-blocking imports";
   assert_contains css "--sx-color-code-comment: #57606a" "401 accessible code comment token";
   assert_not_contains css ".callout-title { color: var(--sx-color-callout-" "401 no low contrast title";
+  assert_contains css ".jt-theme-toggle::before { content: \"◐\"; }"
+    "default theme switch keeps its visible icon";
   List.iter (fun cls -> assert_contains css ("." ^ cls) ("302 styled class " ^ cls))
     ["jt-navbar"; "jt-navbar-inner"; "jt-brand"; "jt-nav-links"; "jt-nav-link";
      "jt-search-btn"; "jt-theme-toggle"; "jt-search-modal"; "jt-search-dialog";
@@ -634,6 +828,48 @@ let test_lighthouse_tasks () =
     | Ok p -> p | Error e -> fail (error_to_string e) in
   let find (plan : Site_builder.build_plan) path =
     (List.find (fun (a : Site_builder.output_artifact) -> a.out_path = path) plan.artifacts).content in
+  let anchored_entry extra =
+    match Site_builder.parse_source_file {source with raw_markdown=
+      "---\ntitle: Page title\n" ^ extra ^ "---\n# **Page title**\n\n[Back to title](#page-title)\n\n## Page title"} with
+    | Ok entry -> entry | Error e -> fail (error_to_string e) in
+  let anchored = anchored_entry "" in
+  let hero = anchored_entry "layout: home\nhero:\n  name: Landing title\n" in
+  List.iter (fun (html, heading) ->
+      assert_contains html heading "template H1 preserves the removed Markdown title anchor";
+      assert_contains html "href=\"#page-title\"" "title fragment links remain intact";
+      assert_contains html "<h2 id=\"page-title-1\">" "body heading does not reuse the title ID")
+    [Site_builder.render_blog_article ~config:default_blog_config ~series:None anchored,
+       "<h1 id=\"page-title\">";
+     Site_builder.render_docs_page ~config:default_docs_config ~all_docs:[anchored] anchored,
+       "<h1 id=\"page-title\">";
+     Site_builder.render_docs_home ~config:default_docs_config anchored,
+       "<h1 class=\"jt-hero-name\" id=\"page-title\">";
+     Site_builder.render_docs_home ~config:default_docs_config hero,
+       "<h1 class=\"jt-hero-name\" id=\"page-title\">"];
+  assert_contains css ".jt-outline a {\n  display: block;\n  padding: 4px var(--sx-space-2);\n  color: var(--sx-color-link);\n  text-decoration: underline;"
+    "default outline uses the link token with a non-color indicator";
+  let docs_html = find (compile default_docs_config
+      [{source with collection="contents"; rel_path="contents/guide.md"}]) "contents/guide/index.html" in
+  assert_contains docs_html ".jt-navbar:has(" "critical CSS retains the open-menu header override";
+  assert_contains docs_html "overflow-y:auto" "critical CSS retains scrollable dialog rules";
+  assert_contains css "max-height: calc(100dvh - 7rem - var(--sx-space-2)); overflow-y: auto"
+    "mobile outline uses token spacing and scrolls within the dynamic viewport";
+  assert_contains docs_html "max-height:calc(100vh - 7rem - var("
+    "critical CSS retains the outline viewport fallback";
+  assert_contains docs_html "max-height:calc(100dvh - 7rem - var("
+    "critical CSS retains the dynamic viewport constraint with optimized token aliases";
+  let collision_entry = anchored_entry "" in
+  let collision_entry = {collision_entry with rendered=Markdown.render ~heading_base:2
+      "## jt-outline\n\n## jt-outline-toggle\n\n## jt-main-nav"} in
+  let collision_html = Site_builder.render_docs_page ~config:default_docs_config
+      ~all_docs:[collision_entry] collision_entry in
+  assert_contains collision_html "<aside id=\"jt-outline\"" "outline retains its template ID";
+  List.iter (fun id ->
+    assert_contains collision_html ("<h2 id=\"" ^ id ^ "-1\">")
+      "docs headings cannot shadow runtime control lookups";
+    assert_contains collision_html ("href=\"#" ^ id ^ "-1\"")
+      "outline links point at the disambiguated heading")
+    ["jt-outline"; "jt-outline-toggle"; "jt-main-nav"];
   List.iter (fun mode ->
     let config = {(if mode = Docs_mode then default_docs_config else default_blog_config) with mode} in
     let plan = compile config [source] in
@@ -703,6 +939,8 @@ let () =
   test_safe_urls ();
   test_color_tokens_and_site_builder ();
   test_adapters ();
+  test_cli_assets ();
+
   test_lighthouse_tasks ();
   if Array.length Sys.argv <> 3 then fail "Expected CLI executable and tokens path";
   Cloudflare_cli.run ~executable:Sys.argv.(1) ~tokens_path:Sys.argv.(2);
