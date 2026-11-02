@@ -330,6 +330,9 @@ type site_config = {
   sidebar : sidebar_group list;
   auto_sidebar : bool;
   enable_search : bool;
+  custom_js : string option;
+  custom_css : string option;
+
   inline_css : bool;
 }
 
@@ -364,6 +367,9 @@ let default_blog_config =
     sidebar = [];
     auto_sidebar = false;
     enable_search = true;
+    custom_js = None;
+    custom_css = None;
+
     inline_css = true;
   }
 
@@ -395,5 +401,8 @@ let default_docs_config =
       ];
     auto_sidebar = true;
     enable_search = true;
+    custom_js = None;
+    custom_css = None;
+
     inline_css = true;
   }
