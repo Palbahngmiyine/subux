@@ -53,6 +53,11 @@ jobs:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Check out validation script
+        if: steps.release.outputs.release_created == 'true' || inputs.recovery-tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Resolve exact draft commit
         id: draft
         if: steps.release.outputs.release_created == 'true' || inputs.recovery-tag != ''
@@ -60,15 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.recovery-tag || steps.release.outputs.tag_name }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
-          release=$(gh release view "$RELEASE_TAG" --json isDraft,targetCommitish)
-          test "$(jq -r .isDraft <<< "$release")" = true
-          sha=$(jq -er .targetCommitish <<< "$release")
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" = "$sha"
-          printf 'tag=%s\nsha=%s\n' "$RELEASE_TAG" "$sha" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-draft.sh
 
   build:
     name: Validate release bytes

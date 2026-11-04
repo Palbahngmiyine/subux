@@ -73,6 +73,8 @@ jobs:
         run: opam exec -- dune exec subux -- check
       - name: Check package input rejection
         run: bash .github/scripts/test-package.sh
+      - name: Check release recovery validation
+        run: bash .github/scripts/test-recovery.sh
       - name: Package and smoke test outside the checkout
         run: bash .github/scripts/package.sh "$RUNNER_TEMP/packages"
       - name: Upload tested package
