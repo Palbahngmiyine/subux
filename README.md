@@ -31,6 +31,10 @@ dune runtest
 dune exec subux -- check
 ```
 
+CI validates native Linux and macOS packages on x86_64 and arm64. Release Please
+maintains release PRs; merging one publishes tested archives and checksums.
+See [Releases](docs/RELEASING.md) for repository setup and recovery.
+
 ## License
 
 Subux is licensed under the [MIT License](LICENSE). The vendored cmarkit
