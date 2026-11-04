@@ -33,6 +33,6 @@ dune exec subux -- check
 
 ## License
 
-Subux is licensed under the MIT License, as declared in `dune-project`. The
-vendored cmarkit parser keeps its own license in
+Subux is licensed under the [MIT License](LICENSE). The vendored cmarkit
+parser keeps its own license in
 [`vendor/cmarkit/LICENSE.md`](vendor/cmarkit/LICENSE.md).
