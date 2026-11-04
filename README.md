@@ -32,7 +32,8 @@ directory inside the input, or `null` to copy nothing.
 
 - `public/_headers` is appended after the headers Subux generates.
 - `public/favicon.svg` and `public/robots.txt` replace the generated defaults.
-- Any other file that would overwrite generated output stops the build.
+- Any other file that would overwrite generated output, even with different
+  letter case, stops the build.
 - Symbolic links and special files are rejected.
 
 To link icons or a web app manifest from every page, list them in `headLinks`:

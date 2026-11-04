@@ -1471,9 +1471,11 @@ let overridable_artifacts = [ "favicon.svg"; "robots.txt" ]
 
 let merge_public_files ~(generated : output_artifact list)
     (public : output_artifact list) : (output_artifact list, build_error) result =
+  (* Compare case-insensitively: macOS and Windows file systems usually are. *)
   let conflict a (b : output_artifact) =
-    a = b.out_path || String.starts_with ~prefix:(a ^ "/") b.out_path
-    || String.starts_with ~prefix:(b.out_path ^ "/") a
+    let a = String.lowercase_ascii a and b = String.lowercase_ascii b.out_path in
+    a = b || String.starts_with ~prefix:(a ^ "/") b
+    || String.starts_with ~prefix:(b ^ "/") a
   in
   let generated_path path =
     List.exists (fun (a : output_artifact) -> a.out_path = path) generated

@@ -89,7 +89,8 @@ val valid_artifact_path : string -> bool
     is copied byte for byte. A public [_headers] is appended after the
     generated rules; public [favicon.svg] and [robots.txt] replace the
     generated defaults. Unsafe paths, any other collision with generated
-    output, and file/directory conflicts are [Config_error]s. *)
+    output, and file/directory conflicts are [Config_error]s. Collisions are
+    detected ignoring ASCII case, as on case-insensitive file systems. *)
 val merge_public_files :
   generated:output_artifact list ->
   output_artifact list ->

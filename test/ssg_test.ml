@@ -800,6 +800,9 @@ let test_public_files () =
     [ "index.html"; "post/index.html"; "assets/subux-theme.css"; "post"; "assets";
       "index.html/child"; "favicon.svg/child" ];
   expect_error [ artifact "dir" "file"; artifact "dir/file" "nested" ] "6.4 reject public file/directory conflict";
+  List.iter (fun path -> expect_error [ artifact path "x" ] ("6.6 reject case-only collision: " ^ path))
+    [ "Index.html"; "POST/index.html"; "Assets/subux-theme.css"; "_HEADERS"; "Favicon.svg" ];
+  expect_error [ artifact "Notes.txt" "a"; artifact "notes.txt" "b" ] "6.6 reject case-only public duplicates";
   List.iter (fun path -> expect_error [ artifact path "x" ] ("6.5 reject unsafe path: " ^ String.escaped path))
     [ ""; "/abs"; "../escape"; "a/../b"; "./a"; "a//b"; "a/"; "a\\b"; "a\000b"; "a\nb" ];
   print_endline "PASS: Public file passthrough tests"
@@ -940,6 +943,10 @@ let test_cli_public_dir () =
     assert_true (not (Sys.file_exists (path "out2/favicons"))) "7.2 default directory not copied";
     assert_true (Sys.file_exists (path "out2/public/notes/index.html"))
       "7.2 an unconfigured public folder is ordinary content";
+    write (site ^ "/stray/public") "a file, not a directory";
+    let status, log = run_cli_bounded cli ~log:(path "output.log")
+        [ "check"; "-i"; path (site ^ "/stray"); "--tokens"; tokens ] in
+    assert_true (status = Some (Unix.WEXITED 0)) ("7.2 a default public file is ignored\n" ^ log);
     config "{\"publicDir\":null}";
     ignore (build ~out:"out3" ~expect:0 "7.3 public directory disabled");
     assert_true (not (Sys.file_exists (path "out3/favicons"))) "7.3 nothing copied when disabled";

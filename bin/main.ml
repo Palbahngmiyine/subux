@@ -552,6 +552,7 @@ let resolve_public_dir (input_dir : string) : (string option, build_error) resul
             if explicit then Error (Config_error ("publicDir does not exist: " ^ path))
             else Ok None
           else
+            if not explicit && not (Sys.is_directory candidate) then Ok None else
             let dir = Unix.realpath candidate in
             let prefix = if base = "/" then base else base ^ "/" in
             if String.starts_with ~prefix dir && (Unix.stat dir).Unix.st_kind = Unix.S_DIR
