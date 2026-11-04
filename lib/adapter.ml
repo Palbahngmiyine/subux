@@ -29,19 +29,13 @@ let valid_date raw =
       date.day <= days
   | Some _ | None -> false
 
-let valid_path path =
-  String.for_all (fun c -> c > '\031' && c <> '\127' && c <> '\\') path
-  && List.for_all
-       (fun part -> part <> "" && part <> "." && part <> "..")
-       (String.split_on_char '/' path)
-
 let validate_artifacts artifacts =
   let paths = List.map
       (fun (a : Site_builder.output_artifact) -> a.out_path) artifacts in
   let rec check = function
     | [] -> Ok ()
     | path :: rest ->
-        if not (valid_path path) then
+        if not (Site_builder.valid_artifact_path path) then
           Error (Config_error ("Unsafe adapter artifact path: " ^ path))
         else if List.exists
             (fun other -> other = path

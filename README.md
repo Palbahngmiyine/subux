@@ -23,6 +23,18 @@ dune exec subux -- build -i site -o _site
 Set `baseUrl` in `site/subux.json` to the real site address so canonical URLs
 and the sitemap use it. `dune exec subux -- help` lists every command and option.
 
+## Static files
+
+Files in the input's `public/` directory are copied to the output root
+unchanged, so `public/favicons/icon.png` becomes `/favicons/icon.png`. Markdown
+there is copied, not rendered. Set `"publicDir"` in `subux.json` to use another
+directory inside the input, or `null` to copy nothing.
+
+- `public/_headers` is appended after the headers Subux generates.
+- `public/favicon.svg` and `public/robots.txt` replace the generated defaults.
+- Any other file that would overwrite generated output stops the build.
+- Symbolic links and special files are rejected.
+
 ## Development
 
 ```sh

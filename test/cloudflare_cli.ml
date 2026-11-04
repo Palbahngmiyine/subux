@@ -88,6 +88,8 @@ let test_workspace ~executable ~tokens_path work =
   write "input/articles/keep.md" "# Retained article\n";
   write "input/contents/guide.md" "# Guide\n";
   write "input/subux.json" "{\"baseUrl\":\"https://example.com\"}\n";
+  write "input/public/favicons/icon.png" "\x89PNG\000";
+  write "input/public/_headers" "/sw.js\n  Cache-Control: no-store\n";
   List.iter (fun mode ->
     let static = "static-" ^ mode and output = "cf-" ^ mode in
     build ~expect_success:true [ "--mode"; mode; "-o"; path static ];
@@ -96,6 +98,11 @@ let test_workspace ~executable ~tokens_path work =
     compare_trees (path static)
       (path (output ^ "/.cloudflare/output/v0/workers/default/assets")))
     [ "blog"; "docs"; "unified" ];
+
+  present (asset "favicons/icon.png");
+  ensure (read_file (path (asset "_headers")) |> String.ends_with
+            ~suffix:"\n/sw.js\n  Cache-Control: no-store\n")
+    "Cloudflare assets merge public _headers";
 
   (* Deleted and newly drafted pages disappear; unrelated files survive. *)
   write "cf-blog/keep.txt" "keep\n";

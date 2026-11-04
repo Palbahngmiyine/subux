@@ -1454,3 +1454,44 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
     | Some content -> [ { out_path = "assets/custom.js"; content } ]
   in
   Ok { entries; artifacts = system_artifacts @ custom_artifacts @ script_artifacts @ page_artifacts }
+
+(* 5. Public File Passthrough *)
+let valid_artifact_path path =
+  String.for_all (fun c -> c > '\031' && c <> '\127' && c <> '\\') path
+  && List.for_all
+       (fun part -> part <> "" && part <> "." && part <> "..")
+       (String.split_on_char '/' path)
+
+let overridable_artifacts = [ "favicon.svg"; "robots.txt" ]
+
+let merge_public_files ~(generated : output_artifact list)
+    (public : output_artifact list) : (output_artifact list, build_error) result =
+  let conflict a (b : output_artifact) =
+    a = b.out_path || String.starts_with ~prefix:(a ^ "/") b.out_path
+    || String.starts_with ~prefix:(b.out_path ^ "/") a
+  in
+  let generated_path path =
+    List.exists (fun (a : output_artifact) -> a.out_path = path) generated
+  in
+  let replace path f acc =
+    List.map (fun (a : output_artifact) -> if a.out_path = path then f a else a) acc
+  in
+  List.fold_left (fun acc (file : output_artifact) ->
+    Result.bind acc (fun acc ->
+      let path = file.out_path in
+      let reject reason =
+        Error (Config_error (Printf.sprintf "publicDir file %S %s" path reason))
+      in
+      if not (valid_artifact_path path) then reject "has an unsafe path"
+      else if path = "_headers" && generated_path path then
+        Ok (replace path (fun a ->
+          let sep = if String.ends_with ~suffix:"\n" a.content then "" else "\n" in
+          { a with content = a.content ^ sep ^ file.content }) acc)
+      else if List.mem path overridable_artifacts && generated_path path then
+        Ok (replace path (fun _ -> file) acc)
+      else if List.exists (conflict path) generated then
+        reject "conflicts with generated output"
+      else if List.exists (conflict path) acc then
+        reject "conflicts with another public file"
+      else Ok (acc @ [ file ])))
+    (Ok generated) public

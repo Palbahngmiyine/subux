@@ -33,12 +33,19 @@ let is_markdown_file (name : string) : bool =
   let lower = String.lowercase_ascii name in
   String.ends_with ~suffix:".md" lower || String.ends_with ~suffix:".mdx" lower
 
-let rec collect_markdown_files_in_dir ~(base_dir : string) ~(collection : string)
-    (rel_prefix : string) : Site_builder.source_file list =
+(* True when [dir] is the public directory, whose files are copied unrendered. *)
+let is_excluded (exclude : string option) (dir : string) : bool =
+  match exclude with
+  | None -> false
+  | Some root -> (try Unix.realpath dir = root with Unix.Unix_error _ -> false)
+
+let rec collect_markdown_files_in_dir ?exclude ~(base_dir : string)
+    ~(collection : string) (rel_prefix : string) : Site_builder.source_file list =
   let full_dir =
     if rel_prefix = "" then base_dir else Filename.concat base_dir rel_prefix
   in
-  if not (Sys.file_exists full_dir && Sys.is_directory full_dir) then []
+  if not (Sys.file_exists full_dir && Sys.is_directory full_dir)
+     || is_excluded exclude full_dir then []
   else
     let entries =
       Sys.readdir full_dir |> Array.to_list |> List.sort String.compare
@@ -54,7 +61,8 @@ let rec collect_markdown_files_in_dir ~(base_dir : string) ~(collection : string
           in
           let full = Filename.concat full_dir name in
           if Sys.is_directory full then
-            collect_markdown_files_in_dir ~base_dir ~collection rel
+            if is_excluded exclude full then []
+            else collect_markdown_files_in_dir ?exclude ~base_dir ~collection rel
           else if is_markdown_file name then
             match read_file_result full with
             | Ok raw_markdown ->
@@ -67,7 +75,7 @@ let rec collect_markdown_files_in_dir ~(base_dir : string) ~(collection : string
           else [])
       entries
 
-let discover_sources (input_dir : string) (config : site_config) :
+let discover_sources ?exclude (input_dir : string) (config : site_config) :
     Site_builder.source_file list =
   match config.mode with
   | Blog_mode ->
@@ -78,13 +86,13 @@ let discover_sources (input_dir : string) (config : site_config) :
         List.concat_map
           (fun (t : collection_tab) ->
             let col_dir = Filename.concat input_dir t.folder in
-            collect_markdown_files_in_dir ~base_dir:col_dir ~collection:t.folder
+            collect_markdown_files_in_dir ?exclude ~base_dir:col_dir ~collection:t.folder
               "")
           tabs
       in
       if tab_sources <> [] then tab_sources
       else
-        collect_markdown_files_in_dir ~base_dir:input_dir ~collection:"articles"
+        collect_markdown_files_in_dir ?exclude ~base_dir:input_dir ~collection:"articles"
           ""
   | Docs_mode ->
       let root_index =
@@ -100,15 +108,15 @@ let discover_sources (input_dir : string) (config : site_config) :
       let docs_dir = Filename.concat input_dir "docs" in
       let sub_sources =
         if Sys.file_exists contents_dir && Sys.is_directory contents_dir then
-          collect_markdown_files_in_dir ~base_dir:contents_dir ~collection:"" ""
+          collect_markdown_files_in_dir ?exclude ~base_dir:contents_dir ~collection:"" ""
           |> List.map (fun (s : Site_builder.source_file) ->
                  { s with rel_path = "contents/" ^ s.rel_path })
         else if Sys.file_exists docs_dir && Sys.is_directory docs_dir then
-          collect_markdown_files_in_dir ~base_dir:docs_dir ~collection:"" ""
+          collect_markdown_files_in_dir ?exclude ~base_dir:docs_dir ~collection:"" ""
           |> List.map (fun (s : Site_builder.source_file) ->
                  { s with rel_path = "docs/" ^ s.rel_path })
         else
-          collect_markdown_files_in_dir ~base_dir:input_dir ~collection:"" ""
+          collect_markdown_files_in_dir ?exclude ~base_dir:input_dir ~collection:"" ""
           |> List.filter (fun (s : Site_builder.source_file) ->
                  s.rel_path <> "index.md"
                  && s.rel_path <> "CLAUDE.md"
@@ -123,14 +131,14 @@ let discover_sources (input_dir : string) (config : site_config) :
         List.concat_map
           (fun (t : collection_tab) ->
             let col_dir = Filename.concat input_dir t.folder in
-            collect_markdown_files_in_dir ~base_dir:col_dir ~collection:t.folder
+            collect_markdown_files_in_dir ?exclude ~base_dir:col_dir ~collection:t.folder
               "")
           tabs
       in
       let contents_dir = Filename.concat input_dir "contents" in
       let doc_sources =
         if Sys.file_exists contents_dir && Sys.is_directory contents_dir then
-          collect_markdown_files_in_dir ~base_dir:contents_dir
+          collect_markdown_files_in_dir ?exclude ~base_dir:contents_dir
             ~collection:"contents" ""
         else []
       in
@@ -475,6 +483,95 @@ let build_effective_config (opts : cli_options) :
   in
   Ok with_title
 
+let unix_error (err, fn, arg) =
+  Io_error (Printf.sprintf "%s(%s): %s" fn arg (Unix.error_message err))
+
+(* Resolve [publicDir] (default "public"; null disables it) to a real directory
+   inside the input directory. A missing default directory is not an error. *)
+let resolve_public_dir (input_dir : string) : (string option, build_error) result =
+  let open Result_syntax in
+  let config_file = Filename.concat input_dir "subux.json" in
+  let* setting =
+    if not (Sys.file_exists config_file) then Ok (Some ("public", false))
+    else
+      let* raw = read_file_result config_file in
+      let* json = Json_parser.parse raw in
+      match json with
+      | Json_parser.Object fields ->
+          begin match List.assoc_opt "publicDir" fields with
+          | None -> Ok (Some ("public", false))
+          | Some Json_parser.Null -> Ok None
+          | Some (Json_parser.String path) -> Ok (Some (path, true))
+          | Some _ -> Error (Config_error "publicDir must be a relative directory path or null")
+          end
+      | _ -> Error (Config_error "subux.json root must be a JSON object")
+  in
+  match setting with
+  | None -> Ok None
+  | Some (path, explicit) ->
+      if path = "" || not (Filename.is_relative path)
+         || List.exists (fun part -> part = "..") (String.split_on_char '/' path)
+         || String.contains path '\\'
+      then Error (Config_error "publicDir must be a relative path inside the input directory")
+      else
+        try
+          let base = Unix.realpath input_dir in
+          let candidate = Filename.concat base path in
+          if not (Sys.file_exists candidate) then
+            if explicit then Error (Config_error ("publicDir does not exist: " ^ path))
+            else Ok None
+          else
+            let dir = Unix.realpath candidate in
+            let prefix = if base = "/" then base else base ^ "/" in
+            if String.starts_with ~prefix dir && (Unix.stat dir).Unix.st_kind = Unix.S_DIR
+            then Ok (Some dir)
+            else Error (Config_error "publicDir must resolve to a directory inside the input directory")
+        with
+        | Sys_error msg -> Error (Io_error msg)
+        | Unix.Unix_error (err, fn, arg) -> Error (unix_error (err, fn, arg))
+
+(* Read every regular file under [root] without following links. Links and
+   special files are rejected before opening, so a FIFO cannot block a build. *)
+let read_public_files (root : string) :
+    (Site_builder.output_artifact list, build_error) result =
+  let open Result_syntax in
+  let rec walk rel =
+    let full = if rel = "" then root else Filename.concat root rel in
+    match (Unix.lstat full).Unix.st_kind with
+    | Unix.S_DIR ->
+        let names = Sys.readdir full |> Array.to_list |> List.sort String.compare in
+        let+ nested = map_list (fun name ->
+          walk (if rel = "" then name else rel ^ "/" ^ name)) names in
+        List.concat nested
+    | Unix.S_REG ->
+        let+ content = read_file_result full in
+        [ { Site_builder.out_path = rel; content } ]
+    | _ ->
+        Error (Config_error
+          ("publicDir entries must be regular files or directories: " ^ rel))
+  in
+  try walk "" with
+  | Sys_error msg -> Error (Io_error msg)
+  | Unix.Unix_error (err, fn, arg) -> Error (unix_error (err, fn, arg))
+
+(* Render the site, then add public files before deployment packaging. *)
+let plan_site (opts : cli_options) (config : site_config) :
+    (Site_builder.build_plan * Site_builder.output_artifact list, build_error) result =
+  let open Result_syntax in
+  let t_path = resolve_tokens_path opts.tokens_path opts.input_dir in
+  let* tokens_json = read_file_result t_path in
+  let* public_root = resolve_public_dir opts.input_dir in
+  let sources = discover_sources ?exclude:public_root opts.input_dir config in
+  let* plan = Site_builder.compile_site ~config ~tokens_json sources in
+  let* public = match public_root with
+    | None -> Ok []
+    | Some root -> read_public_files root
+  in
+  let* site = Site_builder.merge_public_files ~generated:plan.artifacts public in
+  let+ artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
+      ~compatibility_date:opts.compatibility_date site in
+  (plan, artifacts)
+
 let run_init (opts : cli_options) : (unit, build_error) result =
   let open Result_syntax in
   let dir = if opts.input_dir = "." then "site" else opts.input_dir in
@@ -602,24 +699,14 @@ let run () : (unit, build_error) result =
       end
   | "check" ->
       let* config = build_effective_config opts in
-      let t_path = resolve_tokens_path opts.tokens_path opts.input_dir in
-      let* tokens_json = read_file_result t_path in
-      let sources = discover_sources opts.input_dir config in
-      let* plan = Site_builder.compile_site ~config ~tokens_json sources in
-      let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
-          ~compatibility_date:opts.compatibility_date plan.artifacts in
+      let* plan, artifacts = plan_site opts config in
       Printf.printf "OK: Checked %d markdown entries and %d generated artifacts.\n"
         (List.length plan.entries)
         (List.length artifacts);
       Ok ()
   | _ ->
       let* config = build_effective_config opts in
-      let t_path = resolve_tokens_path opts.tokens_path opts.input_dir in
-      let* tokens_json = read_file_result t_path in
-      let sources = discover_sources opts.input_dir config in
-      let* plan = Site_builder.compile_site ~config ~tokens_json sources in
-      let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
-          ~compatibility_date:opts.compatibility_date plan.artifacts in
+      let* plan, artifacts = plan_site opts config in
       let* () = match opts.adapter with
         | Adapter.Cloudflare -> write_cloudflare_output opts.output_dir artifacts
         | Adapter.Static ->
