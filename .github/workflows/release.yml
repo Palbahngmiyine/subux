@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      recovery-tag:
+        description: Existing draft to rebuild and publish (for example v0.1.0)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subux-release-main
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Update release PR or resolve draft
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
+      sha: ${{ steps.draft.outputs.sha }}
+    steps:
+      - name: Require the previous release to be published
+        if: inputs.recovery-tag == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pending=$(gh release list --limit 100 --json isDraft,tagName \
+            --jq '.[] | select(.isDraft and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .tagName')
+          if [ -n "$pending" ]; then
+            echo "::error::Recover the existing draft with recovery-tag before starting another release: $pending"
+            exit 1
+          fi
+      - name: Create release PR or draft release
+        id: release
+        if: inputs.recovery-tag == ''
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ github.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Check out validation script
+        if: steps.release.outputs.release_created == 'true' || inputs.recovery-tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve exact draft commit
+        id: draft
+        if: steps.release.outputs.release_created == 'true' || inputs.recovery-tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.recovery-tag || steps.release.outputs.tag_name }}
+        run: bash .github/scripts/resolve-draft.sh
+
+  build:
+    name: Validate release bytes
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
+
+  publish:
+    name: Publish tested assets
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages from this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: subux-*
+          merge-multiple: true
+          path: packages
+      - name: Verify all packages and publish the draft
+        working-directory: packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#v}
+          for platform in linux-x86_64 linux-arm64 darwin-x86_64 darwin-arm64; do
+            name="subux-${version}-${platform}"
+            test -s "$name.tar.gz"
+            test -s "$name.tar.gz.sha256"
+            tar -xOf "$name.tar.gz" "$name/BUILD-INFO" | grep -Fx "commit=$RELEASE_SHA"
+            tar -xOf "$name.tar.gz" "$name/version.txt" | grep -Fx "$version"
+          done
+          test "$(find . -name '*.tar.gz' | wc -l)" -eq 4
+          cat subux-*.tar.gz.sha256 > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+          shasum -a 256 -c SHA256SUMS
+          release=$(gh release view "$RELEASE_TAG" --json isDraft,targetCommitish)
+          test "$(jq -r .isDraft <<< "$release")" = true
+          test "$(jq -r .targetCommitish <<< "$release")" = "$RELEASE_SHA"
+          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" = "$RELEASE_SHA"
+          gh release upload "$RELEASE_TAG" subux-*.tar.gz SHA256SUMS --clobber
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > actual-assets
+          printf '%s\n' subux-*.tar.gz SHA256SUMS | sort > expected-assets
+          diff -u expected-assets actual-assets
+          gh release edit "$RELEASE_TAG" --draft=false --latest
