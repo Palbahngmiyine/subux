@@ -1,117 +1,46 @@
-# AGENTS.md — AI Agent Engineering & Contribution Guide
+# Instructions
 
-This document defines the architectural invariants, security boundaries, design-token rules, and verification workflows for AI coding agents (OpenAI Codex, Google Antigravity/Gemini, Claude Code, Cursor, etc.) and contributors working on **Subux**.
+## Read First
 
----
+- Read the relevant source and its `.mli` before writing tests or changing behavior. Treat the code as the source of truth, not names, docs, or memory.
+- Check the current checkout, Git status, and affected callers before editing. Preserve user-owned changes.
+- Keep this file aligned with the source. Describe proposed architecture as a proposal until implemented.
 
-## 1. Mission & Core Constraints
+## Project Invariants
 
-**Subux** is a pure functional Static Site Generator (SSG) built with **OCaml 5 (`ocamlopt`)** and **Dune**. It compiles markdown workspaces into static websites supporting three built-in rendering modes:
+- **No runtime dependencies.** Subux builds with only the OCaml compiler and Dune. Do not add PPX, C stubs, or external opam libraries; the CommonMark parser stays vendored in `vendor/cmarkit/`. Browser and pixel-comparison tooling under `test/` is test-only and must not become a build or runtime requirement.
+- **Pure library, imperative shell.** `lib/` performs no filesystem, network, environment, or clock access and keeps no global mutable state. All I/O stays in `bin/main.ml`.
+- **No exceptions in `lib/`.** Report failures as `result` values carrying `Domain.build_error`.
+- **Contracts live in `.mli`.** Change the interface and its doc comment together with the implementation; keep helpers private by leaving them out of the interface.
+- **Warnings are errors.** Fix the warning; do not relax the dune flags.
 
-1. **`Blog_mode`** — Collection tabs (`articles`, `tech`, `translations`), year timeline grouping, reading time, TOC, series navigation, Obsidian `[[WikiLinks]]`, 27 Callout aliases mapped to 16 semantic tokens, `::video{...}` directives, footnote hover tooltips, `.hljs-*` syntax highlighting, lazy Mermaid rendering, client-side search, and 404 recovery.
-2. **`Docs_mode`** — Documentation layout with `layout: home` hero/features landing pages, ordered/auto-generated `.jt-sidebar`, document outline TOC (`On this page`), prev/next footer pager, and search modal (`⌘K`).
-3. **`Unified_mode`** — Hybrid mode rendering both blog collections and documentation pages under a single unified W3C DTCG theme stylesheet.
+## Security
 
-### Non-Negotiable Engineering Constraints
+- Frontmatter rejects YAML tags, anchors, and aliases.
+- Every URL emitted into `href`, `src`, or `::video{src=...}` passes through `Safe_url`. Only `http:`, `https:`, and relative URLs are allowed, plus `mailto:` and `tel:` for links. Leading and trailing control characters and spaces, and embedded tabs and newlines, are removed before the scheme is read.
+- Build HTML with the escaping constructors in `Html`. Never pass user content or metadata (titles, descriptions, tags, hero text) to `Html.raw`.
+- Add a test for every new input path, including the hostile case it must reject.
 
-- **Minimal Disk Footprint (Zero-PPX Policy)**:
-  - Do **not** introduce PPX syntax extensions (`ppxlib`, `ppx_deriving`, `ppx_yojson_conv`), C stubs, or external opam runtime dependencies.
-  - The entire `_build/` directory must stay lightweight (~16 MB) and compile to a single native executable (`~3.2 MB`) in sub-second incremental builds.
-  - `vendor/cmarkit/` is vendored in-tree so the project builds out-of-the-box with only the OCaml compiler and Dune installed.
-- **Functional Core, Imperative Shell**:
-  - `lib/` (`Subux_lib`) is **100% pure functional**. No filesystem, network, environment variable, or clock access is permitted in `lib/`.
-  - `bin/main.ml` is the **only** place allowed to perform I/O (`Sys`, `Unix`, `In_channel`, `Out_channel`).
-- **Compiler-Enforced Totality**:
-  - All targets use `(flags (:standard -w +a-4-40-42-44 -warn-error +a))`. Warnings are fatal errors.
+## Color Contract
 
----
+`design/tokens.json` is the source of truth; `design/COLOR-THEME.md` summarizes it.
 
-## 2. Repository Map
+- Component styles use `--sx-*` custom properties, never hardcoded colors.
+- Primary and accent are fills only. Put text on them with `--sx-color-on-primary` / `--sx-color-on-accent`; use `--sx-color-link` for text links without a fill.
+- Pair every color state change with a non-color indicator such as a border, underline, weight, or icon.
 
-```text
-subux/
-├── dune-project              # Dune 3.16+ project metadata (package: subux)
-├── CLAUDE.md                 # Quick reference for Claude Code
-├── AGENTS.md                 # Canonical agent & contributor handbook (this file)
-├── design/
-│   ├── COLOR-THEME.md        # Subux Color Theme specification (Light/Dark, WCAG, LLM rules)
-│   └── tokens.json           # W3C DTCG 3-layer design tokens (source of truth)
-├── vendor/
-│   └── cmarkit/              # Vendored pure-OCaml CommonMark parser (ISC license, zero deps)
-├── lib/                      # Pure Functional Core (Subux_lib) — NO I/O ALLOWED
-│   ├── dune
-│   ├── domain.mli / .ml      # Core ADTs, Slug, date_val, 16 callout_kind variants, Result_syntax
-│   ├── safe_url.mli / .ml    # WHATWG URL sanitizer (blocks javascript:, data:, vbscript:)
-│   ├── json_parser.mli / .ml # Pure RFC 8259 JSON parser & serializer
-│   ├── token_compiler.mli/.ml# Compiles design/tokens.json -> --sx-* CSS stylesheet
-│   ├── frontmatter.mli / .ml # Safe YAML subset parser (blog + documentation hero/features)
-│   ├── markdown.mli / .ml    # Cmarkit AST mapper & renderer (WikiLinks, Callouts, Footnotes, TOC)
-│   ├── html.mli / .ml        # Type-safe HTML ADT with automatic entity escaping
-│   └── site_builder.mli /.ml # Pure site compiler (Blog_mode, Docs_mode, Unified_mode)
-├── bin/                      # Imperative Shell — I/O isolated here
-│   ├── dune
-│   └── main.ml               # CLI entry point (build, tokens, check, init, help)
-└── test/
-    ├── dune
-    └── ssg_test.ml           # Unit & integration regression suite
-```
+## Testing
 
----
+- Add a regression for every bug fix and show that it fails on the unfixed code. Cover the error and security edge cases, not only the happy path.
+- Derive expected results from the contract, not from the implementation under test. Never weaken a check to get a passing result.
+- Before handing off, run `dune build`, `dune runtest`, and `dune exec subux -- check`. For visible output changes, also run the affected browser checks in `test/` and report which ones did not run.
+- Leave no generated sites or scratch files tracked in the repository.
 
-## 3. Coding & Security Invariants
+## Pull Request Evidence
 
-### 3.1 Pure Error Handling (`Result_syntax`)
-Never throw exceptions (`raise`, `failwith`, `invalid_arg`, `Not_found`) in `lib/`. Use `Domain.build_error` and monadic binding:
+Every pull request description includes an artifact that settles what it claims, so a reviewer can confirm the change without reproducing it.
 
-```ocaml
-open Domain
-open Result_syntax
-
-let transform (input : string) : (output, build_error) result =
-  let* doc = Frontmatter.parse input in
-  let rendered = Markdown.render doc.body in
-  Ok (doc.meta, rendered)
-```
-
-### 3.2 Interface-First Development (`.mli`)
-When adding or modifying a function or type in `lib/<name>.ml`:
-1. Update `lib/<name>.mli` first with explicit type signatures and doc comments `(** ... *)`.
-2. Keep internal helper functions private by omitting them from `lib/<name>.mli`.
-3. Disambiguate record labels with explicit type annotations `(x : my_record)` so Warning 41 (`ambiguous-name`) is never triggered.
-
-### 3.3 Security Boundaries
-Every markdown transformation or template modification must preserve these three security defenses:
-1. **Safe YAML Frontmatter (`lib/frontmatter.ml`)**:
-   - Reject YAML tags (`!!js/function`, `!<tag>`), anchors (`&anchor`), and aliases (`*alias`) with `Error (Unsafe_yaml_construct ...)` or `Error (Invalid_frontmatter ...)`.
-2. **WHATWG URL Sanitization (`lib/safe_url.ml`)**:
-   - Every `<a href="...">`, `<img src="...">`, and `::video{src="..."}` attribute must pass through `Safe_url.is_safe_url` / `Safe_url.sanitize_url`.
-   - Strip ASCII control characters (`0x00`–`0x1F`, `0x7F`) and whitespace before inspecting the scheme. Only `http:`, `https:`, `mailto:`, `tel:`, and relative URLs (`/`, `./`, `../`, `#`, `?`) are allowed.
-3. **HTML Escaping (`lib/html.ml`)**:
-   - Construct UI trees using `Html.el`, `Html.void`, and `Html.txt`. Never pass unescaped user metadata (`title`, `description`, `tags`, `hero.tagline`) to `Html.raw`.
-
-### 3.4 Color Token Contract (`design/COLOR-THEME.md`)
-When editing CSS in `lib/token_compiler.ml` or HTML class structures in `lib/site_builder.ml` / `lib/markdown.ml`:
-- **Never hardcode hex/RGB colors** in component styles; always use `--sx-*` custom properties.
-- **Never use `--sx-color-primary` or `--sx-color-accent` as text `color`**; they are pastel fills (`#c2e7ff`, `#ffdac2`) with low contrast on light backgrounds (`1.24:1`). Always pair them as backgrounds with `--sx-color-on-primary` / `--sx-color-on-accent` (`#1f1f1f`).
-- **Use `--sx-color-link`** for un-pill'd text links (footnote numbers, TOC links).
-- **Include non-color indicators** (border/underline bar, `font-weight: 600`, icon symbol, or text badge) alongside color state changes.
-
----
-
-## 4. Agent Workflow & Verification Checklist
-
-Whenever you implement a feature, fix a bug, or adjust styling:
-
-1. **Inspect Interfaces First**: Read the relevant `lib/*.mli` files and `design/COLOR-THEME.md` (plus `LIGHTHOUSE-TASKS.md` if present locally) before editing implementation files.
-2. **Implement Purely**: Make changes in `lib/` without introducing side effects or mutable state.
-3. **Add Regression Tests**: Add unit or end-to-end assertions in `test/ssg_test.ml` covering both happy paths and error/security edge cases.
-4. **Build & Run Tests**:
-   ```bash
-   dune build
-   dune runtest
-   ```
-5. **Verify CLI Check**:
-   ```bash
-   dune exec subux -- check
-   ```
-6. **Confirm Clean Workspace**: Ensure no temporary scratch files or generated `_site/` directories are left tracked in the repository root.
+- Behavior change or bug fix: the regression's output failing on the base revision and passing on the head.
+- Rendered output or styling: before and after screenshots, or the pixel-comparison result.
+- Documentation only: the consistency checks run and their results.
+- Bind each artifact to the head commit and the environment that produced it. When an artifact cannot be produced, name the claim that stays unverified and why.
