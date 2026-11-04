@@ -704,6 +704,129 @@ let test_adapters () =
     "5.7 reject file/directory conflicts";
   expect_error (adapt []) "5.8 require home and 404 artifacts";
   print_endline "PASS: Static and Cloudflare adapter tests"
+let test_head_links () =
+  let link ?link_type ?sizes rel href = make_head_link ~rel ~href ~link_type ~sizes in
+  let ok ?link_type ?sizes rel href = match link ?link_type ?sizes rel href with
+    | Ok l -> l
+    | Error e -> fail ("8.1 accept " ^ rel ^ " " ^ href ^ ": " ^ error_to_string e)
+  in
+  List.iter (fun rel -> ignore (ok rel "/favicons/icon.png"))
+    [ "icon"; "apple-touch-icon"; "apple-touch-icon-precomposed"; "manifest" ];
+  List.iter (fun href -> ignore (ok "icon" href))
+    [ "/a.png"; "a.png"; "https://cdn.example.com/a.png"; "//cdn.example.com/a.png" ];
+  let expect_error result message = match result with
+    | Error (Config_error reason) -> assert_contains reason "headLinks" (message ^ " names the field")
+    | Error e -> fail (message ^ ": " ^ error_to_string e)
+    | Ok _ -> fail message
+  in
+  List.iter (fun rel -> expect_error (link rel "/a.png") ("8.2 reject rel " ^ String.escaped rel))
+    [ ""; "stylesheet"; "preload"; "modulepreload"; "Icon"; "icon "; "icon stylesheet" ];
+  List.iter (fun href -> expect_error (link "icon" href) ("8.3 reject href " ^ String.escaped href))
+    [ ""; "javascript:alert(1)"; " JAVASCRIPT:alert(1)"; "java\tscript:alert(1)";
+      "data:image/png;base64,AA"; "mailto:a@b.c"; "/a.png\n"; "/a\000.png" ];
+  expect_error (link ~link_type:"image/png\n" "icon" "/a.png") "8.4 reject control characters in type";
+  expect_error (link ~sizes:"" "icon" "/a.png") "8.4 reject empty sizes";
+  let page config =
+    let src = { Site_builder.collection = "articles"; rel_path = "articles/a.md"; raw_markdown = "# A\n" } in
+    match Site_builder.compile_site ~config ~tokens_json:(In_channel.with_open_bin "../design/tokens.json" In_channel.input_all) [ src ] with
+    | Error e -> fail ("8.5 compile: " ^ error_to_string e)
+    | Ok plan ->
+        List.filter_map (fun (a : Site_builder.output_artifact) ->
+          if Filename.check_suffix a.out_path ".html" then Some a.content else None) plan.artifacts
+  in
+  let default_icon = {|<link rel="icon" type="image/svg+xml" href="/favicon.svg">|} in
+  List.iter (fun html -> assert_contains html default_icon "8.5 default favicon without icon links")
+    (page default_blog_config);
+  let manifest = ok "manifest" "/manifest.json" in
+  List.iter (fun html ->
+    assert_contains html default_icon "8.5 a manifest alone keeps the default favicon";
+    assert_contains html {|<link rel="manifest" href="/manifest.json">|} "8.5 manifest link")
+    (page { default_blog_config with head_links = [ manifest ] });
+  let icon = ok ~link_type:"image/png" ~sizes:"32x32" "icon" {|/favicons/a"b<c.png|} in
+  let apple = ok ~sizes:"180x180" "apple-touch-icon" "/favicons/apple.png" in
+  let pages = page { default_docs_config with head_links = [ icon; apple; manifest ] } in
+  assert_true (pages <> []) "8.6 pages rendered";
+  List.iter (fun html ->
+    assert_not_contains html "/favicon.svg" "8.6 an icon link replaces the default favicon";
+    assert_contains html
+      {|<link rel="icon" type="image/png" sizes="32x32" href="/favicons/a&quot;b&lt;c.png">|}
+      "8.6 icon attributes are escaped";
+    assert_contains html {|<link rel="apple-touch-icon" sizes="180x180" href="/favicons/apple.png">|}
+      "8.6 apple touch icon") pages;
+  print_endline "PASS: Head link tests"
+
+let test_public_files () =
+  let artifact out_path content : Site_builder.output_artifact = { out_path; content } in
+  let generated = [ artifact "index.html" "home"; artifact "post/index.html" "post";
+                    artifact "_headers" "/*\n  X-Frame-Options: DENY\n";
+                    artifact "favicon.svg" "<svg/>"; artifact "robots.txt" "User-agent: *\n";
+                    artifact "assets/subux-theme.css" "css" ] in
+  let merge = Site_builder.merge_public_files ~generated in
+  let expect_error public message = match merge public with
+    | Error (Config_error reason) -> assert_contains reason "publicDir" (message ^ " names the field")
+    | Error e -> fail (message ^ ": " ^ error_to_string e)
+    | Ok _ -> fail message
+  in
+  let binary = "\x89PNG\r\n\x1a\n\000\255" in
+  begin match merge [ artifact "favicons/icon.png" binary; artifact "service-worker.js" "sw";
+                      artifact "_headers" "/service-worker.js\n  Cache-Control: no-store\n";
+                      artifact "favicon.svg" "<svg id=\"own\"/>"; artifact "robots.txt" "" ] with
+  | Error e -> fail ("6.1 merge public files: " ^ error_to_string e)
+  | Ok merged ->
+      let find path = match List.find_all (fun (a : Site_builder.output_artifact) -> a.out_path = path) merged with
+        | [ a ] -> a.content
+        | found -> fail (Printf.sprintf "6.1 expected one %s, found %d" path (List.length found))
+      in
+      assert_eq_str (find "favicons/icon.png") binary "6.1 binary bytes are copied unchanged";
+      assert_eq_str (find "service-worker.js") "sw" "6.1 new root files are added";
+      assert_eq_str (find "_headers")
+        "/*\n  X-Frame-Options: DENY\n/service-worker.js\n  Cache-Control: no-store\n"
+        "6.2 public _headers follow the generated rules";
+      assert_eq_str (find "favicon.svg") "<svg id=\"own\"/>" "6.3 public favicon replaces the default";
+      assert_eq_str (find "robots.txt") "" "6.3 public robots.txt replaces the default";
+      assert_eq_str (find "post/index.html") "post" "6.1 rendered pages are retained";
+      assert_true (List.length merged = List.length generated + 2) "6.1 no extra artifacts"
+  end;
+  begin match Site_builder.merge_public_files ~generated:[ artifact "_headers" "/*\n  A: b" ]
+                [ artifact "_headers" "/x\n  C: d\n" ] with
+  | Ok [ { content; _ } ] -> assert_eq_str content "/*\n  A: b\n/x\n  C: d\n" "6.2 rules stay on separate lines"
+  | _ -> fail "6.2 merge headers without a trailing newline"
+  end;
+  begin match Site_builder.merge_public_files ~generated:[] [ artifact "_headers" "h" ] with
+  | Ok [ { out_path = "_headers"; content = "h" } ] -> ()
+  | _ -> fail "6.2 public _headers is kept when none is generated"
+  end;
+  List.iter (fun path -> expect_error [ artifact path "x" ] ("6.4 reject collision: " ^ path))
+    [ "index.html"; "post/index.html"; "assets/subux-theme.css"; "post"; "assets";
+      "index.html/child"; "favicon.svg/child" ];
+  expect_error [ artifact "dir" "file"; artifact "dir/file" "nested" ] "6.4 reject public file/directory conflict";
+  List.iter (fun path -> expect_error [ artifact path "x" ] ("6.6 reject case-only collision: " ^ path))
+    [ "Index.html"; "POST/index.html"; "Assets/subux-theme.css"; "_HEADERS"; "Favicon.svg" ];
+  expect_error [ artifact "Notes.txt" "a"; artifact "notes.txt" "b" ] "6.6 reject case-only public duplicates";
+  List.iter (fun path -> expect_error [ artifact path "x" ] ("6.5 reject unsafe path: " ^ String.escaped path))
+    [ ""; "/abs"; "../escape"; "a/../b"; "./a"; "a//b"; "a/"; "a\\b"; "a\000b"; "a\nb" ];
+  print_endline "PASS: Public file passthrough tests"
+
+(* Run the CLI for at most two seconds; [None] means it was killed. *)
+let run_cli_bounded cli ~log args =
+  let output = Unix.openfile log [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+  let pid = Unix.create_process cli (Array.of_list (cli :: args)) Unix.stdin output output in
+  Unix.close output;
+  let rec wait remaining =
+    let finished, status = Unix.waitpid [ Unix.WNOHANG ] pid in
+    if finished <> 0 then Some status
+    else if remaining = 0 then begin
+      Unix.kill pid Sys.sigkill;
+      ignore (Unix.waitpid [] pid);
+      None
+    end else begin
+      ignore (Unix.select [] [] [] 0.01);
+      wait (remaining - 1)
+    end
+  in
+  let status = wait 200 in
+  (status, In_channel.with_open_bin log In_channel.input_all)
+
 (* Exercise CLI I/O boundaries with real files and a bounded child process.
    In particular a FIFO must be rejected before opening it for reading. *)
 let test_cli_assets () =
@@ -729,25 +852,8 @@ let test_cli_assets () =
     write "site.js" "/* regular module */";
     let run key value expected label =
       write "subux.json" (Json_parser.to_string (Json_parser.Object [ key, value ]));
-      let output = Unix.openfile (path "output.log") [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-      let pid = Unix.create_process cli
-          [| cli; "check"; "-i"; input; "--tokens"; "../design/tokens.json" |]
-          Unix.stdin output output in
-      Unix.close output;
-      let rec wait remaining =
-        let finished, status = Unix.waitpid [ Unix.WNOHANG ] pid in
-        if finished <> 0 then Some status
-        else if remaining = 0 then begin
-          Unix.kill pid Sys.sigkill;
-          ignore (Unix.waitpid [] pid);
-          None
-        end else begin
-          ignore (Unix.select [] [] [] 0.01);
-          wait (remaining - 1)
-        end
-      in
-      let status = wait 200 in
-      let log = In_channel.with_open_bin (path "output.log") In_channel.input_all in
+      let status, log = run_cli_bounded cli ~log:(path "output.log")
+          [ "check"; "-i"; input; "--tokens"; "../design/tokens.json" ] in
       (label, key, status, log, expected)
     in
     let posix = Sys.os_type <> "Win32" in
@@ -765,12 +871,155 @@ let test_cli_assets () =
           [ run key (Json_parser.String "internal.css") 0 "internal asset symlink";
             run key (Json_parser.String "external.css") 1 "external asset symlink";
             run key (Json_parser.String "blocked.pipe") 1 "FIFO asset must not block" ]
-        else []) [ "customCss"; "customJs" ])
+        else []) [ "customCss"; "customJs" ]
+    @ List.map (fun (value, expected, label) ->
+        run "headLinks" (Result.get_ok (Json_parser.parse value)) expected label)
+      [ ({|[{"rel":"icon","href":"/favicons/a.png","type":"image/png","sizes":"32x32"},{"rel":"manifest","href":"/manifest.json"}]|}, 0, "valid head links");
+        ({|{"rel":"icon","href":"/a.png"}|}, 1, "headLinks must be an array");
+        ({|["/a.png"]|}, 1, "entries must be objects");
+        ({|[{"rel":"icon"}]|}, 1, "href is required");
+        ({|[{"href":"/a.png"}]|}, 1, "rel is required");
+        ({|[{"rel":"icon","href":"/a.png","onload":"alert(1)"}]|}, 1, "unknown attribute");
+        ({|[{"rel":"stylesheet","href":"/a.css"}]|}, 1, "rel outside the allowlist");
+        ({|[{"rel":"icon","href":"javascript:alert(1)"}]|}, 1, "script URL");
+        ({|[{"rel":"icon","href":"/a.png","sizes":32}]|}, 1, "non-string attribute") ])
   in
   List.iter (fun (label, key, status, log, expected) ->
     assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
     if expected <> 0 then assert_contains log key (label ^ " identifies the asset field")) results;
   print_endline "PASS: CLI custom asset boundary tests"
+
+(* Public files are copied, never rendered, and links, special files and
+   paths outside the input directory are rejected without blocking. *)
+let test_cli_public_dir () =
+  let cli = Unix.realpath Sys.argv.(1) in
+  let tokens = Unix.realpath "../design/tokens.json" in
+  let root = Filename.temp_file "subux-public-" "" in
+  Sys.remove root;
+  Unix.mkdir root 0o700;
+  let path rel = Filename.concat root rel in
+  let rec mkdir_p dir =
+    if not (Sys.file_exists dir) then (mkdir_p (Filename.dirname dir); Unix.mkdir dir 0o755)
+  in
+  let write rel content =
+    mkdir_p (Filename.dirname (path rel));
+    Out_channel.with_open_bin (path rel) (fun ch -> Out_channel.output_string ch content)
+  in
+  let read rel = In_channel.with_open_bin (path rel) In_channel.input_all in
+  let rec remove p =
+    match (Unix.lstat p).Unix.st_kind with
+    | Unix.S_DIR -> Array.iter (fun n -> remove (Filename.concat p n)) (Sys.readdir p); Unix.rmdir p
+    | _ -> Unix.unlink p
+  in
+  Fun.protect ~finally:(fun () -> remove root) (fun () ->
+    let site = "site" in
+    let build ?(cmd = "build") ?(out = "out") ~expect label =
+      let status, log = run_cli_bounded cli ~log:(path "output.log")
+          [ cmd; "-i"; path site; "-o"; path out; "--mode"; "docs"; "--tokens"; tokens ] in
+      assert_true (status = Some (Unix.WEXITED expect)) (label ^ "\n" ^ log);
+      log
+    in
+    let config json = write (site ^ "/subux.json") json in
+    (* Docs mode without contents/ scans the input root, so public Markdown
+       would become a page if the public directory were not excluded. *)
+    write (site ^ "/index.md") "# Home\n";
+    write (site ^ "/guide.md") "# Guide\n";
+    write (site ^ "/public/notes.md") "# Raw note\n";
+    write (site ^ "/public/favicons/icon.png") "\x89PNG\000\255";
+    write (site ^ "/public/_headers") "/service-worker.js\n  Cache-Control: no-store\n";
+    config "{\"baseUrl\":\"https://example.com\"}";
+    ignore (build ~expect:0 "7.1 default public directory");
+    assert_eq_str (read "out/favicons/icon.png") "\x89PNG\000\255" "7.1 public bytes copied";
+    assert_eq_str (read "out/notes.md") "# Raw note\n" "7.1 public Markdown copied verbatim";
+    assert_true (not (Sys.file_exists (path "out/public"))) "7.1 public Markdown is not rendered";
+    assert_true (Sys.file_exists (path "out/guide/index.html")) "7.1 root Markdown still rendered";
+    assert_contains (read "out/_headers") "X-Frame-Options: DENY" "7.1 generated headers kept";
+    assert_true (String.ends_with ~suffix:"\n/service-worker.js\n  Cache-Control: no-store\n"
+                   (read "out/_headers")) "7.1 public headers appended";
+    write (site ^ "/static/robots.txt") "User-agent: *\nDisallow: /\n";
+    config "{\"publicDir\":\"static\"}";
+    ignore (build ~out:"out2" ~expect:0 "7.2 configured public directory");
+    assert_eq_str (read "out2/robots.txt") "User-agent: *\nDisallow: /\n" "7.2 configured directory used";
+    assert_true (not (Sys.file_exists (path "out2/favicons"))) "7.2 default directory not copied";
+    assert_true (Sys.file_exists (path "out2/public/notes/index.html"))
+      "7.2 an unconfigured public folder is ordinary content";
+    write (site ^ "/stray/public") "a file, not a directory";
+    let status, log = run_cli_bounded cli ~log:(path "output.log")
+        [ "check"; "-i"; path (site ^ "/stray"); "--tokens"; tokens ] in
+    assert_true (status = Some (Unix.WEXITED 0)) ("7.2 a default public file is ignored\n" ^ log);
+    config "{\"publicDir\":null}";
+    ignore (build ~out:"out3" ~expect:0 "7.3 public directory disabled");
+    assert_true (not (Sys.file_exists (path "out3/favicons"))) "7.3 nothing copied when disabled";
+    write "elsewhere/keep.txt" "keep";
+    List.iter (fun (value, label) ->
+      config (Printf.sprintf "{\"publicDir\":%s}" value);
+      assert_contains (build ~cmd:"check" ~expect:1 label) "publicDir" (label ^ " names the field"))
+      [ ("true", "7.4 non-string publicDir");
+        ("\"\"", "7.4 empty publicDir");
+        ("\"../elsewhere\"", "7.4 publicDir traversal");
+        (Printf.sprintf "%S" (path (site ^ "/static")), "7.4 absolute publicDir");
+        ("\"missing\"", "7.4 missing configured publicDir");
+        ("\"guide.md\"", "7.4 publicDir must be a directory") ];
+    write (site ^ "/public/index.html") "shadow";
+    config "{}";
+    assert_contains (build ~cmd:"check" ~expect:1 "7.5 collision") "index.html" "7.5 collision names the file";
+    Unix.unlink (path (site ^ "/public/index.html"));
+    if Sys.os_type <> "Win32" then begin
+      Unix.symlink (path "elsewhere") (path (site ^ "/outside-link"));
+      config "{\"publicDir\":\"outside-link\"}";
+      ignore (build ~cmd:"check" ~expect:1 "7.6 publicDir symlink outside the input");
+      config "{}";
+      Unix.symlink (path "elsewhere/keep.txt") (path (site ^ "/public/linked.txt"));
+      ignore (build ~cmd:"check" ~expect:1 "7.6 symlink inside publicDir");
+      Unix.unlink (path (site ^ "/public/linked.txt"));
+      Unix.mkfifo (path (site ^ "/public/blocked.pipe")) 0o600;
+      ignore (build ~cmd:"check" ~expect:1 "7.7 FIFO in publicDir must not block")
+    end);
+  print_endline "PASS: CLI public directory boundary tests"
+
+(* Markdown discovery skips links it cannot follow, never loops on directory
+   cycles, and never opens special files, while still following valid links. *)
+let test_cli_discovery_links () =
+  if Sys.os_type <> "Win32" then begin
+    let cli = Unix.realpath Sys.argv.(1) in
+    let tokens = Unix.realpath "../design/tokens.json" in
+    let root = Filename.temp_file "subux-links-" "" in
+    Sys.remove root;
+    Unix.mkdir root 0o700;
+    let path rel = Filename.concat root rel in
+    let rec mkdir_p dir =
+      if not (Sys.file_exists dir) then (mkdir_p (Filename.dirname dir); Unix.mkdir dir 0o755)
+    in
+    let write rel content =
+      mkdir_p (Filename.dirname (path rel));
+      Out_channel.with_open_bin (path rel) (fun ch -> Out_channel.output_string ch content)
+    in
+    let rec remove p =
+      match (Unix.lstat p).Unix.st_kind with
+      | Unix.S_DIR -> Array.iter (fun n -> remove (Filename.concat p n)) (Sys.readdir p); Unix.rmdir p
+      | _ -> Unix.unlink p
+    in
+    Fun.protect ~finally:(fun () -> remove root) (fun () ->
+      (* Docs mode without contents/ scans the whole input directory. *)
+      write "site/index.md" "# Home\n";
+      write "site/guide.md" "# Guide\n";
+      write "shared/extra.md" "# Extra\n";
+      Unix.symlink (path "shared") (path "site/linked");
+      Unix.symlink (path "missing.md") (path "site/broken.md");
+      Unix.symlink (path "missing-dir") (path "site/gone");
+      Unix.symlink (path "site") (path "site/loop");
+      Unix.mkfifo (path "site/pipe.md") 0o600;
+      let status, log = run_cli_bounded cli ~log:(path "output.log")
+          [ "build"; "-i"; path "site"; "-o"; path "out"; "--mode"; "docs"; "--tokens"; tokens ] in
+      assert_true (status = Some (Unix.WEXITED 0)) ("9.1 discovery survives unusable links\n" ^ log);
+      assert_contains log "Built 3 entries" "9.2 each document is discovered once";
+      assert_true (Sys.file_exists (path "out/guide/index.html")) "9.2 regular documents are built";
+      assert_true (Sys.file_exists (path "out/linked/extra/index.html"))
+        "9.3 valid directory links are still followed";
+      assert_true (not (Sys.file_exists (path "out/loop"))) "9.4 directory cycles are not expanded";
+      assert_true (not (Sys.file_exists (path "out/pipe"))) "9.5 special files are not rendered");
+    print_endline "PASS: CLI Markdown discovery link tests"
+  end
 
 let test_lighthouse_tasks () =
   let tokens_json = In_channel.with_open_text "../design/tokens.json" In_channel.input_all in
@@ -956,7 +1205,11 @@ let () =
   test_safe_urls ();
   test_color_tokens_and_site_builder ();
   test_adapters ();
+  test_public_files ();
+  test_head_links ();
   test_cli_assets ();
+  test_cli_public_dir ();
+  test_cli_discovery_links ();
 
   test_lighthouse_tasks ();
   if Array.length Sys.argv <> 3 then fail "Expected CLI executable and tokens path";
