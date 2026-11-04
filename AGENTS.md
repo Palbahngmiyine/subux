@@ -26,7 +26,7 @@
 `design/tokens.json` is the source of truth; `design/COLOR-THEME.md` summarizes it.
 
 - Component styles use `--sx-*` custom properties, never hardcoded colors.
-- Primary and accent are fills only. Put text on them with `on-primary` / `on-accent`; use `--sx-color-link` for text links without a fill.
+- Primary and accent are fills only. Put text on them with `--sx-color-on-primary` / `--sx-color-on-accent`; use `--sx-color-link` for text links without a fill.
 - Pair every color state change with a non-color indicator such as a border, underline, weight, or icon.
 
 ## Testing
