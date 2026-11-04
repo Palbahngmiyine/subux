@@ -39,41 +39,53 @@ let is_excluded (exclude : string option) (dir : string) : bool =
   | None -> false
   | Some root -> (try Unix.realpath dir = root with Unix.Unix_error _ -> false)
 
-let rec collect_markdown_files_in_dir ?exclude ~(base_dir : string)
+(* Walk Markdown sources, following directory links. [ancestors] holds the
+   (device, inode) of each directory on the current path, so a link back to an
+   ancestor ends the walk instead of looping. Entries that cannot be resolved,
+   such as dangling links, and anything but regular files are skipped, which
+   matches how unreadable files are already skipped. *)
+let rec collect_markdown_files_in_dir ?exclude ?(ancestors = []) ~(base_dir : string)
     ~(collection : string) (rel_prefix : string) : Site_builder.source_file list =
   let full_dir =
     if rel_prefix = "" then base_dir else Filename.concat base_dir rel_prefix
   in
-  if not (Sys.file_exists full_dir && Sys.is_directory full_dir)
-     || is_excluded exclude full_dir then []
-  else
-    let entries =
-      Sys.readdir full_dir |> Array.to_list |> List.sort String.compare
-    in
-    List.concat_map
-      (fun name ->
-        if String.starts_with ~prefix:"." name || name = "_site" || name = "dist"
-           || name = "_build" || name = "vendor" || name = "node_modules"
-        then []
-        else
-          let rel =
-            if rel_prefix = "" then name else rel_prefix ^ "/" ^ name
-          in
-          let full = Filename.concat full_dir name in
-          if Sys.is_directory full then
-            if is_excluded exclude full then []
-            else collect_markdown_files_in_dir ?exclude ~base_dir ~collection rel
-          else if is_markdown_file name then
-            match read_file_result full with
-            | Ok raw_markdown ->
-                let rel_path =
-                  if collection = "" then rel
-                  else collection ^ "/" ^ rel
-                in
-                [ { Site_builder.collection; rel_path; raw_markdown } ]
-            | Error _ -> []
-          else [])
-      entries
+  match Unix.stat full_dir with
+  | exception Unix.Unix_error _ -> []
+  | { Unix.st_kind = Unix.S_DIR; st_dev; st_ino; _ } ->
+      let id = (st_dev, st_ino) in
+      if List.mem id ancestors || is_excluded exclude full_dir then []
+      else
+        let entries =
+          try Sys.readdir full_dir |> Array.to_list |> List.sort String.compare
+          with Sys_error _ -> []
+        in
+        List.concat_map
+          (fun name ->
+            if String.starts_with ~prefix:"." name || name = "_site" || name = "dist"
+               || name = "_build" || name = "vendor" || name = "node_modules"
+            then []
+            else
+              let rel =
+                if rel_prefix = "" then name else rel_prefix ^ "/" ^ name
+              in
+              let full = Filename.concat full_dir name in
+              match Unix.stat full with
+              | exception Unix.Unix_error _ -> []
+              | { Unix.st_kind = Unix.S_DIR; _ } ->
+                  collect_markdown_files_in_dir ?exclude ~ancestors:(id :: ancestors)
+                    ~base_dir ~collection rel
+              | { Unix.st_kind = Unix.S_REG; _ } when is_markdown_file name ->
+                  begin match read_file_result full with
+                  | Ok raw_markdown ->
+                      let rel_path =
+                        if collection = "" then rel else collection ^ "/" ^ rel
+                      in
+                      [ { Site_builder.collection; rel_path; raw_markdown } ]
+                  | Error _ -> []
+                  end
+              | _ -> [])
+          entries
+  | _ -> []
 
 let discover_sources ?exclude (input_dir : string) (config : site_config) :
     Site_builder.source_file list =

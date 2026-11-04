@@ -977,6 +977,50 @@ let test_cli_public_dir () =
     end);
   print_endline "PASS: CLI public directory boundary tests"
 
+(* Markdown discovery skips links it cannot follow, never loops on directory
+   cycles, and never opens special files, while still following valid links. *)
+let test_cli_discovery_links () =
+  if Sys.os_type <> "Win32" then begin
+    let cli = Unix.realpath Sys.argv.(1) in
+    let tokens = Unix.realpath "../design/tokens.json" in
+    let root = Filename.temp_file "subux-links-" "" in
+    Sys.remove root;
+    Unix.mkdir root 0o700;
+    let path rel = Filename.concat root rel in
+    let rec mkdir_p dir =
+      if not (Sys.file_exists dir) then (mkdir_p (Filename.dirname dir); Unix.mkdir dir 0o755)
+    in
+    let write rel content =
+      mkdir_p (Filename.dirname (path rel));
+      Out_channel.with_open_bin (path rel) (fun ch -> Out_channel.output_string ch content)
+    in
+    let rec remove p =
+      match (Unix.lstat p).Unix.st_kind with
+      | Unix.S_DIR -> Array.iter (fun n -> remove (Filename.concat p n)) (Sys.readdir p); Unix.rmdir p
+      | _ -> Unix.unlink p
+    in
+    Fun.protect ~finally:(fun () -> remove root) (fun () ->
+      (* Docs mode without contents/ scans the whole input directory. *)
+      write "site/index.md" "# Home\n";
+      write "site/guide.md" "# Guide\n";
+      write "shared/extra.md" "# Extra\n";
+      Unix.symlink (path "shared") (path "site/linked");
+      Unix.symlink (path "missing.md") (path "site/broken.md");
+      Unix.symlink (path "missing-dir") (path "site/gone");
+      Unix.symlink (path "site") (path "site/loop");
+      Unix.mkfifo (path "site/pipe.md") 0o600;
+      let status, log = run_cli_bounded cli ~log:(path "output.log")
+          [ "build"; "-i"; path "site"; "-o"; path "out"; "--mode"; "docs"; "--tokens"; tokens ] in
+      assert_true (status = Some (Unix.WEXITED 0)) ("9.1 discovery survives unusable links\n" ^ log);
+      assert_contains log "Built 3 entries" "9.2 each document is discovered once";
+      assert_true (Sys.file_exists (path "out/guide/index.html")) "9.2 regular documents are built";
+      assert_true (Sys.file_exists (path "out/linked/extra/index.html"))
+        "9.3 valid directory links are still followed";
+      assert_true (not (Sys.file_exists (path "out/loop"))) "9.4 directory cycles are not expanded";
+      assert_true (not (Sys.file_exists (path "out/pipe"))) "9.5 special files are not rendered");
+    print_endline "PASS: CLI Markdown discovery link tests"
+  end
+
 let test_lighthouse_tasks () =
   let tokens_json = In_channel.with_open_text "../design/tokens.json" In_channel.input_all in
   let css = match Token_compiler.compile_full_stylesheet tokens_json with
@@ -1165,6 +1209,7 @@ let () =
   test_head_links ();
   test_cli_assets ();
   test_cli_public_dir ();
+  test_cli_discovery_links ();
 
   test_lighthouse_tasks ();
   if Array.length Sys.argv <> 3 then fail "Expected CLI executable and tokens path";
