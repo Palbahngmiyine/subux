@@ -35,6 +35,20 @@ directory inside the input, or `null` to copy nothing.
 - Any other file that would overwrite generated output stops the build.
 - Symbolic links and special files are rejected.
 
+To link icons or a web app manifest from every page, list them in `headLinks`:
+
+```json
+"headLinks": [
+  { "rel": "icon", "type": "image/png", "sizes": "32x32", "href": "/favicons/favicon-32x32.png" },
+  { "rel": "apple-touch-icon", "sizes": "180x180", "href": "/favicons/apple-icon-180x180.png" },
+  { "rel": "manifest", "href": "/manifest.json" }
+]
+```
+
+`rel` is one of `icon`, `apple-touch-icon`, `apple-touch-icon-precomposed` or
+`manifest`, and `href` must be a relative, `http:` or `https:` URL. Declaring an
+`icon` replaces the default `/favicon.svg` link.
+
 ## Development
 
 ```sh

@@ -704,6 +704,57 @@ let test_adapters () =
     "5.7 reject file/directory conflicts";
   expect_error (adapt []) "5.8 require home and 404 artifacts";
   print_endline "PASS: Static and Cloudflare adapter tests"
+let test_head_links () =
+  let link ?link_type ?sizes rel href = make_head_link ~rel ~href ~link_type ~sizes in
+  let ok ?link_type ?sizes rel href = match link ?link_type ?sizes rel href with
+    | Ok l -> l
+    | Error e -> fail ("8.1 accept " ^ rel ^ " " ^ href ^ ": " ^ error_to_string e)
+  in
+  List.iter (fun rel -> ignore (ok rel "/favicons/icon.png"))
+    [ "icon"; "apple-touch-icon"; "apple-touch-icon-precomposed"; "manifest" ];
+  List.iter (fun href -> ignore (ok "icon" href))
+    [ "/a.png"; "a.png"; "https://cdn.example.com/a.png"; "//cdn.example.com/a.png" ];
+  let expect_error result message = match result with
+    | Error (Config_error reason) -> assert_contains reason "headLinks" (message ^ " names the field")
+    | Error e -> fail (message ^ ": " ^ error_to_string e)
+    | Ok _ -> fail message
+  in
+  List.iter (fun rel -> expect_error (link rel "/a.png") ("8.2 reject rel " ^ String.escaped rel))
+    [ ""; "stylesheet"; "preload"; "modulepreload"; "Icon"; "icon "; "icon stylesheet" ];
+  List.iter (fun href -> expect_error (link "icon" href) ("8.3 reject href " ^ String.escaped href))
+    [ ""; "javascript:alert(1)"; " JAVASCRIPT:alert(1)"; "java\tscript:alert(1)";
+      "data:image/png;base64,AA"; "mailto:a@b.c"; "/a.png\n"; "/a\000.png" ];
+  expect_error (link ~link_type:"image/png\n" "icon" "/a.png") "8.4 reject control characters in type";
+  expect_error (link ~sizes:"" "icon" "/a.png") "8.4 reject empty sizes";
+  let page config =
+    let src = { Site_builder.collection = "articles"; rel_path = "articles/a.md"; raw_markdown = "# A\n" } in
+    match Site_builder.compile_site ~config ~tokens_json:(In_channel.with_open_bin "../design/tokens.json" In_channel.input_all) [ src ] with
+    | Error e -> fail ("8.5 compile: " ^ error_to_string e)
+    | Ok plan ->
+        List.filter_map (fun (a : Site_builder.output_artifact) ->
+          if Filename.check_suffix a.out_path ".html" then Some a.content else None) plan.artifacts
+  in
+  let default_icon = {|<link rel="icon" type="image/svg+xml" href="/favicon.svg">|} in
+  List.iter (fun html -> assert_contains html default_icon "8.5 default favicon without icon links")
+    (page default_blog_config);
+  let manifest = ok "manifest" "/manifest.json" in
+  List.iter (fun html ->
+    assert_contains html default_icon "8.5 a manifest alone keeps the default favicon";
+    assert_contains html {|<link rel="manifest" href="/manifest.json">|} "8.5 manifest link")
+    (page { default_blog_config with head_links = [ manifest ] });
+  let icon = ok ~link_type:"image/png" ~sizes:"32x32" "icon" {|/favicons/a"b<c.png|} in
+  let apple = ok ~sizes:"180x180" "apple-touch-icon" "/favicons/apple.png" in
+  let pages = page { default_docs_config with head_links = [ icon; apple; manifest ] } in
+  assert_true (pages <> []) "8.6 pages rendered";
+  List.iter (fun html ->
+    assert_not_contains html "/favicon.svg" "8.6 an icon link replaces the default favicon";
+    assert_contains html
+      {|<link rel="icon" type="image/png" sizes="32x32" href="/favicons/a&quot;b&lt;c.png">|}
+      "8.6 icon attributes are escaped";
+    assert_contains html {|<link rel="apple-touch-icon" sizes="180x180" href="/favicons/apple.png">|}
+      "8.6 apple touch icon") pages;
+  print_endline "PASS: Head link tests"
+
 let test_public_files () =
   let artifact out_path content : Site_builder.output_artifact = { out_path; content } in
   let generated = [ artifact "index.html" "home"; artifact "post/index.html" "post";
@@ -817,7 +868,18 @@ let test_cli_assets () =
           [ run key (Json_parser.String "internal.css") 0 "internal asset symlink";
             run key (Json_parser.String "external.css") 1 "external asset symlink";
             run key (Json_parser.String "blocked.pipe") 1 "FIFO asset must not block" ]
-        else []) [ "customCss"; "customJs" ])
+        else []) [ "customCss"; "customJs" ]
+    @ List.map (fun (value, expected, label) ->
+        run "headLinks" (Result.get_ok (Json_parser.parse value)) expected label)
+      [ ({|[{"rel":"icon","href":"/favicons/a.png","type":"image/png","sizes":"32x32"},{"rel":"manifest","href":"/manifest.json"}]|}, 0, "valid head links");
+        ({|{"rel":"icon","href":"/a.png"}|}, 1, "headLinks must be an array");
+        ({|["/a.png"]|}, 1, "entries must be objects");
+        ({|[{"rel":"icon"}]|}, 1, "href is required");
+        ({|[{"href":"/a.png"}]|}, 1, "rel is required");
+        ({|[{"rel":"icon","href":"/a.png","onload":"alert(1)"}]|}, 1, "unknown attribute");
+        ({|[{"rel":"stylesheet","href":"/a.css"}]|}, 1, "rel outside the allowlist");
+        ({|[{"rel":"icon","href":"javascript:alert(1)"}]|}, 1, "script URL");
+        ({|[{"rel":"icon","href":"/a.png","sizes":32}]|}, 1, "non-string attribute") ])
   in
   List.iter (fun (label, key, status, log, expected) ->
     assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
@@ -1093,6 +1155,7 @@ let () =
   test_color_tokens_and_site_builder ();
   test_adapters ();
   test_public_files ();
+  test_head_links ();
   test_cli_assets ();
   test_cli_public_dir ();
 

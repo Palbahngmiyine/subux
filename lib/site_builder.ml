@@ -210,7 +210,12 @@ let common_head ~stylesheet ~(page_title : string) ~(description : string)
   [
     Html.void "meta" ~attrs:[ ("charset", "utf-8") ] ();
     Html.el "title" [ Html.txt page_title ];
-    Html.void "link" ~attrs:[("rel", "icon"); ("type", "image/svg+xml"); ("href", "/favicon.svg")] ();
+    (if List.exists (fun (l : head_link) -> l.rel = "icon") config.head_links then Html.empty
+     else Html.void "link" ~attrs:[("rel", "icon"); ("type", "image/svg+xml"); ("href", "/favicon.svg")] ());
+    Html.frag (List.map (fun (l : head_link) ->
+      let opt name = Option.fold ~none:[] ~some:(fun v -> [ (name, v) ]) in
+      Html.void "link" ~attrs:((("rel", l.rel) :: opt "type" l.link_type)
+        @ opt "sizes" l.sizes @ [ ("href", safe_href l.href) ]) ()) config.head_links);
     Html.void "meta"
       ~attrs:
         [

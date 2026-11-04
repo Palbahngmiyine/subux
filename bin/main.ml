@@ -232,6 +232,36 @@ let parse_config_json (base : site_config) (raw_json : string) :
               groups
         | _ -> base.sidebar
       in
+      let* head_links =
+        match List.assoc_opt "headLinks" fields with
+        | None -> Ok base.head_links
+        | Some (Json_parser.Array items) ->
+            map_list
+              (function
+                | Json_parser.Object lf ->
+                    let field key =
+                      match List.assoc_opt key lf with
+                      | None -> Ok None
+                      | Some (Json_parser.String v) -> Ok (Some v)
+                      | Some _ -> Error (Config_error ("headLinks " ^ key ^ " must be a string"))
+                    in
+                    let* () =
+                      if List.for_all (fun (k, _) -> List.mem k [ "rel"; "href"; "type"; "sizes" ]) lf
+                      then Ok ()
+                      else Error (Config_error "headLinks entries accept only rel, href, type and sizes")
+                    in
+                    let* rel = field "rel" in
+                    let* href = field "href" in
+                    let* link_type = field "type" in
+                    let* sizes = field "sizes" in
+                    begin match rel, href with
+                    | Some rel, Some href -> make_head_link ~rel ~href ~link_type ~sizes
+                    | _ -> Error (Config_error "headLinks entries require rel and href")
+                    end
+                | _ -> Error (Config_error "headLinks entries must be objects"))
+              items
+        | Some _ -> Error (Config_error "headLinks must be an array")
+      in
       Ok
         {
           base with
@@ -250,6 +280,7 @@ let parse_config_json (base : site_config) (raw_json : string) :
           area_tone;
           nav;
           sidebar;
+          head_links;
         }
   | _ -> Error (Config_error "subux.json root must be a JSON object")
 
