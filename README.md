@@ -23,20 +23,6 @@ dune exec subux -- build -i site -o _site
 Set `baseUrl` in `site/subux.json` to the real site address so canonical URLs
 and the sitemap use it. `dune exec subux -- help` lists every command and option.
 
-## Cloudflare
-
-`build --adapter cloudflare` writes a Workers Static Assets build to
-`_site/.cloudflare/output/v0/`. Subux never deploys or handles credentials;
-deploy that output yourself with the Cloudflare CLI (tested with cf
-1.0.0-beta.25):
-
-```sh
-dune exec subux -- build --adapter cloudflare --name my-site -i site -o _site
-cd _site
-cf deploy --prebuilt --dry-run
-cf deploy --prebuilt
-```
-
 ## Development
 
 ```sh
