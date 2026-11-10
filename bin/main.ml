@@ -33,8 +33,12 @@ let is_markdown_file (name : string) : bool =
   let lower = String.lowercase_ascii name in
   String.ends_with ~suffix:".md" lower || String.ends_with ~suffix:".mdx" lower
 
-let rec collect_markdown_files_in_dir ~(base_dir : string) ~(collection : string)
-    (rel_prefix : string) : Site_builder.source_file list =
+let public_dir_name = "public"
+
+(* [skip_public] keeps the top-level static directory out of scans that start at
+   the input root, so its Markdown is copied rather than rendered as pages. *)
+let rec collect_markdown_files_in_dir ?(skip_public = false) ~(base_dir : string)
+    ~(collection : string) (rel_prefix : string) : Site_builder.source_file list =
   let full_dir =
     if rel_prefix = "" then base_dir else Filename.concat base_dir rel_prefix
   in
@@ -47,6 +51,7 @@ let rec collect_markdown_files_in_dir ~(base_dir : string) ~(collection : string
       (fun name ->
         if String.starts_with ~prefix:"." name || name = "_site" || name = "dist"
            || name = "_build" || name = "vendor" || name = "node_modules"
+           || (skip_public && rel_prefix = "" && name = public_dir_name)
         then []
         else
           let rel =
@@ -84,8 +89,8 @@ let discover_sources (input_dir : string) (config : site_config) :
       in
       if tab_sources <> [] then tab_sources
       else
-        collect_markdown_files_in_dir ~base_dir:input_dir ~collection:"articles"
-          ""
+        collect_markdown_files_in_dir ~skip_public:true ~base_dir:input_dir
+          ~collection:"articles" ""
   | Docs_mode ->
       let root_index =
         let idx_path = Filename.concat input_dir "index.md" in
@@ -108,7 +113,8 @@ let discover_sources (input_dir : string) (config : site_config) :
           |> List.map (fun (s : Site_builder.source_file) ->
                  { s with rel_path = "docs/" ^ s.rel_path })
         else
-          collect_markdown_files_in_dir ~base_dir:input_dir ~collection:"" ""
+          collect_markdown_files_in_dir ~skip_public:true ~base_dir:input_dir
+            ~collection:"" ""
           |> List.filter (fun (s : Site_builder.source_file) ->
                  s.rel_path <> "index.md"
                  && s.rel_path <> "CLAUDE.md"
@@ -135,6 +141,47 @@ let discover_sources (input_dir : string) (config : site_config) :
         else []
       in
       tab_sources @ doc_sources
+
+(* Read [<input>/public] as static artifacts, keeping each path relative to it.
+   Nothing is followed out of the directory: symbolic links and special files
+   (FIFOs, sockets, devices) are errors, checked with [lstat] before any open.
+   Dotfiles are skipped, except the [.well-known] directory. *)
+let collect_static_files (input_dir : string) :
+    (Site_builder.output_artifact list, build_error) result =
+  let open Result_syntax in
+  let root = Filename.concat input_dir public_dir_name in
+  let reject rel what =
+    Error (Config_error (Printf.sprintf "%s/%s: %s are not copied as static files"
+      public_dir_name rel what))
+  in
+  let rec walk rel_prefix =
+    let dir = if rel_prefix = "" then root else Filename.concat root rel_prefix in
+    let names = Sys.readdir dir |> Array.to_list |> List.sort String.compare in
+    let+ nested = map_list
+      (fun name ->
+        if String.starts_with ~prefix:"." name && name <> ".well-known" then Ok []
+        else
+          let rel = if rel_prefix = "" then name else rel_prefix ^ "/" ^ name in
+          match (Unix.lstat (Filename.concat root rel)).Unix.st_kind with
+          | Unix.S_DIR -> walk rel
+          | Unix.S_REG ->
+              let+ content = read_file_result (Filename.concat root rel) in
+              [ { Site_builder.out_path = rel; content } ]
+          | Unix.S_LNK -> reject rel "symbolic links"
+          | _ -> reject rel "special files")
+      names
+    in
+    List.concat nested
+  in
+  try
+    match (Unix.lstat root).Unix.st_kind with
+    | Unix.S_DIR -> walk ""
+    | _ -> Error (Config_error (public_dir_name ^ " must be a real directory inside the input directory"))
+  with
+  | Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
+  | Sys_error msg -> Error (Io_error msg)
+  | Unix.Unix_error (err, fn, arg) ->
+      Error (Io_error (Printf.sprintf "%s(%s): %s" fn arg (Unix.error_message err)))
 
 let parse_config_json (base : site_config) (raw_json : string) :
     (site_config, build_error) result =
@@ -576,6 +623,10 @@ let print_usage () : unit =
     \  subux check  [-i <dir>] [--tokens <file>]\n\
     \  subux init   [--mode blog|docs] <dir>\n";
   print_endline
+    "Static files:\n\
+    \  Files in <input-dir>/public are copied to the site root unchanged. A file that\n\
+    \  collides with generated output, a symbolic link or a special file is an error.\n";
+  print_endline
     "Cloudflare Workers Static Assets:\n\
     \  subux build --adapter cloudflare [--name subux-site] [--compatibility-date YYYY-MM-DD] [-i <dir>] [-o <dir>]\n\
     \  cd <output-dir> && cf deploy --prebuilt\n"
@@ -606,8 +657,11 @@ let run () : (unit, build_error) result =
       let* tokens_json = read_file_result t_path in
       let sources = discover_sources opts.input_dir config in
       let* plan = Site_builder.compile_site ~config ~tokens_json sources in
+      let* static_files = collect_static_files opts.input_dir in
+      let* site_files =
+        Adapter.with_static_files ~generated:plan.artifacts static_files in
       let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
-          ~compatibility_date:opts.compatibility_date plan.artifacts in
+          ~compatibility_date:opts.compatibility_date site_files in
       Printf.printf "OK: Checked %d markdown entries and %d generated artifacts.\n"
         (List.length plan.entries)
         (List.length artifacts);
@@ -618,8 +672,11 @@ let run () : (unit, build_error) result =
       let* tokens_json = read_file_result t_path in
       let sources = discover_sources opts.input_dir config in
       let* plan = Site_builder.compile_site ~config ~tokens_json sources in
+      let* static_files = collect_static_files opts.input_dir in
+      let* site_files =
+        Adapter.with_static_files ~generated:plan.artifacts static_files in
       let* artifacts = Adapter.adapt opts.adapter ~name:opts.cloudflare_name
-          ~compatibility_date:opts.compatibility_date plan.artifacts in
+          ~compatibility_date:opts.compatibility_date site_files in
       let* () = match opts.adapter with
         | Adapter.Cloudflare -> write_cloudflare_output opts.output_dir artifacts
         | Adapter.Static ->

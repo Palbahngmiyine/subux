@@ -35,22 +35,52 @@ let valid_path path =
        (fun part -> part <> "" && part <> "." && part <> "..")
        (String.split_on_char '/' path)
 
-let validate_artifacts artifacts =
-  let paths = List.map
-      (fun (a : Site_builder.output_artifact) -> a.out_path) artifacts in
+(* Sorted paths place a file before anything nested beneath it, so one pass
+   finds duplicates and file/directory conflicts. *)
+let check_paths ~unsafe ~conflict paths =
   let rec check = function
     | [] -> Ok ()
     | path :: rest ->
-        if not (valid_path path) then
-          Error (Config_error ("Unsafe adapter artifact path: " ^ path))
+        if not (valid_path path) then Error (Config_error (unsafe ^ path))
         else if List.exists
             (fun other -> other = path
               || String.starts_with ~prefix:(path ^ "/") other) rest then
-          Error (Config_error ("Conflicting adapter artifact path: " ^ path))
+          Error (Config_error (conflict ^ path))
         else check rest
   in
+  check (List.sort String.compare paths)
+
+let out_paths artifacts =
+  List.map (fun (a : Site_builder.output_artifact) -> a.out_path) artifacts
+
+let with_static_files ~generated static_files =
   let open Result_syntax in
-  let* () = check (List.sort String.compare paths) in
+  let static_paths = out_paths static_files in
+  let* () =
+    check_paths ~unsafe:"Unsafe static file path: "
+      ~conflict:"Static file conflicts with another static file: " static_paths
+  in
+  (* Only pairs involving a static file are judged here; generated output keeps
+     whatever layout the selected adapter accepts. *)
+  let nests a b = String.starts_with ~prefix:(a ^ "/") b in
+  let generated_paths = out_paths generated in
+  match
+    List.find_opt
+      (fun s -> List.exists (fun g -> g = s || nests g s || nests s g)
+          generated_paths)
+      static_paths
+  with
+  | Some path ->
+      Error (Config_error ("Static file conflicts with generated output: " ^ path))
+  | None -> Ok (generated @ static_files)
+
+let validate_artifacts artifacts =
+  let paths = out_paths artifacts in
+  let open Result_syntax in
+  let* () =
+    check_paths ~unsafe:"Unsafe adapter artifact path: "
+      ~conflict:"Conflicting adapter artifact path: " paths
+  in
   if List.mem "index.html" paths && List.mem "404.html" paths then Ok ()
   else Error (Config_error "Cloudflare output requires index.html and 404.html")
 

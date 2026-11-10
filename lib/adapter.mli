@@ -9,6 +9,16 @@ val of_string : string -> (t, Domain.build_error) result
 val cloudflare_output_dir : string
 (** The generated Build Output directory, relative to the output root. *)
 
+val with_static_files :
+  generated:Site_builder.output_artifact list ->
+  Site_builder.output_artifact list ->
+  (Site_builder.output_artifact list, Domain.build_error) result
+(** Append author-supplied static files to the generated artifacts, bytes
+    unchanged. Static files never replace generated output: a static path that
+    is unsafe (empty, absolute, containing [.] or [..] segments, backslashes or
+    control characters), repeats another static path, equals a generated path,
+    or would be both a file and a directory in the merged tree is rejected. *)
+
 val adapt :
   t ->
   name:string ->

@@ -703,6 +703,35 @@ let test_adapters () =
   expect_error (adapt (artifact "assets" "file" :: public))
     "5.7 reject file/directory conflicts";
   expect_error (adapt []) "5.8 require home and 404 artifacts";
+  let merge = Adapter.with_static_files ~generated:public in
+  let icon = artifact "favicons/favicon.ico" "\000\255\137PNG\r\n" in
+  let known = artifact ".well-known/security.txt" "Contact: mailto:a@example.com\n" in
+  assert_true (merge [] = Ok public) "5.9 no static files leaves output unchanged";
+  assert_true (merge [ icon; known ] = Ok (public @ [ icon; known ]))
+    "5.9 static files are appended with their bytes unchanged";
+  begin match Result.bind (merge [ icon ]) (fun merged -> adapt merged) with
+  | Error e -> fail ("5.9 Cloudflare packaging: " ^ error_to_string e)
+  | Ok artifacts ->
+      assert_true (List.exists (fun (a : Site_builder.output_artifact) ->
+        a.out_path = Adapter.cloudflare_output_dir
+                     ^ "/workers/default/assets/favicons/favicon.ico"
+        && a.content = icon.content) artifacts)
+        "5.9 static files are packaged as Cloudflare assets"
+  end;
+  List.iter (fun path ->
+    expect_error (merge [ artifact path "private" ])
+      ("5.10 reject unsafe static path: " ^ String.escaped path))
+    [ ""; "/private"; "../private"; "a/../private"; "./private";
+      "a//b"; "a/"; "a\\b"; "a\000b"; "a\nb" ];
+  List.iter (fun (path, label) ->
+    expect_error (merge [ artifact path "override" ]) ("5.11 " ^ label))
+    [ "index.html", "static file must not replace a generated page";
+      "assets/theme.css", "static file must not replace a generated asset";
+      "assets", "static file must not shadow a generated directory";
+      "404.html/extra", "static file must not nest under a generated file" ];
+  expect_error (merge [ icon; icon ]) "5.11 reject duplicate static files";
+  expect_error (merge [ artifact "favicons" "file"; icon ])
+    "5.11 reject static file/directory conflicts";
   print_endline "PASS: Static and Cloudflare adapter tests"
 (* Exercise CLI I/O boundaries with real files and a bounded child process.
    In particular a FIFO must be rejected before opening it for reading. *)
@@ -771,6 +800,118 @@ let test_cli_assets () =
     assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
     if expected <> 0 then assert_contains log key (label ^ " identifies the asset field")) results;
   print_endline "PASS: CLI custom asset boundary tests"
+
+(* Copy <input>/public through the real CLI. Hostile entries must fail the build
+   without being read: a link out of the tree, a FIFO that would block, a
+   linked public directory, and a file that would replace generated output. *)
+let test_cli_public () =
+  let cli = Unix.realpath Sys.argv.(1) in
+  let temp_dir prefix =
+    let dir = Filename.temp_file prefix "" in
+    Sys.remove dir;
+    Unix.mkdir dir 0o700;
+    dir
+  in
+  let rec remove_tree path =
+    match (Unix.lstat path).Unix.st_kind with
+    | Unix.S_DIR ->
+        Array.iter (fun n -> remove_tree (Filename.concat path n)) (Sys.readdir path);
+        Unix.rmdir path
+    | _ -> Unix.unlink path
+    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  in
+  let write path content =
+    Out_channel.with_open_bin path (fun ch -> Out_channel.output_string ch content)
+  in
+  let read path = In_channel.with_open_bin path In_channel.input_all in
+  let work = temp_dir "subux-public-" in
+  let secret = "TOP-SECRET-OUTSIDE-INPUT" in
+  let icon = "\000\255\137PNG\r\n\026\n" in
+  Fun.protect ~finally:(fun () -> remove_tree work) (fun () ->
+    let ( / ) = Filename.concat in
+    let outside = work / "outside" in
+    Unix.mkdir outside 0o700;
+    write (outside / "secret.txt") secret;
+    let case = ref 0 in
+    (* Each case gets a fresh input and output; [setup] fills <input>/public. *)
+    let run ?(make_public = true) command setup =
+      incr case;
+      let input = work / Printf.sprintf "in%d" !case in
+      let out = work / Printf.sprintf "out%d" !case in
+      Unix.mkdir input 0o700;
+      write (input / "post.md") "# Public fixture\n";
+      let public = input / "public" in
+      if make_public then Unix.mkdir public 0o700;
+      setup public;
+      let log = work / "output.log" in
+      let fd = Unix.openfile log [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+      let pid = Unix.create_process cli
+          [| cli; command; "-i"; input; "-o"; out; "--tokens"; "../design/tokens.json" |]
+          Unix.stdin fd fd in
+      Unix.close fd;
+      let rec wait remaining =
+        let finished, status = Unix.waitpid [ Unix.WNOHANG ] pid in
+        if finished <> 0 then Some status
+        else if remaining = 0 then begin
+          Unix.kill pid Sys.sigkill;
+          ignore (Unix.waitpid [] pid);
+          None
+        end else begin
+          ignore (Unix.select [] [] [] 0.01);
+          wait (remaining - 1)
+        end
+      in
+      let status = wait 500 in
+      (status, read log, out)
+    in
+    let expect_ok label (status, log, out) =
+      assert_true (status = Some (Unix.WEXITED 0)) (label ^ "\n" ^ log);
+      out
+    in
+    let expect_rejected label needle (status, log, out) =
+      assert_true (status = Some (Unix.WEXITED 1)) (label ^ "\n" ^ log);
+      assert_contains log needle (label ^ " names the offending path");
+      assert_not_contains log secret (label ^ " must not print outside content");
+      assert_true (not (Sys.file_exists out)) (label ^ " must not write output")
+    in
+    let out = expect_ok "6.1 build copies public files" (run "build" (fun public ->
+      Unix.mkdir (public / "favicons") 0o700;
+      Unix.mkdir (public / ".well-known") 0o700;
+      write (public / "favicons" / "favicon.ico") icon;
+      write (public / ".well-known" / "security.txt") "Contact: mailto:a@example.com\n";
+      write (public / ".DS_Store") "finder";
+      write (public / "notes.md") "# Not a page\n")) in
+    assert_eq_str (read (out / "favicons" / "favicon.ico")) icon
+      "6.1 binary static file copied byte for byte";
+    assert_true (Sys.file_exists (out / ".well-known" / "security.txt"))
+      "6.1 .well-known is copied";
+    assert_true (not (Sys.file_exists (out / ".DS_Store"))) "6.1 dotfiles are skipped";
+    assert_eq_str (read (out / "notes.md")) "# Not a page\n"
+      "6.1 Markdown in public is copied as a file";
+    assert_true (not (Sys.file_exists (out / "notes" / "index.html")))
+      "6.1 Markdown in public is not rendered as a page";
+    assert_true (Sys.file_exists (out / "post" / "index.html"))
+      "6.1 pages outside public still render";
+    ignore (expect_ok "6.2 a site without public still builds"
+      (run ~make_public:false "build" (fun _ -> ())));
+    List.iter (fun command ->
+      expect_rejected ("6.3 " ^ command ^ " rejects a static file replacing generated output")
+        "_headers" (run command (fun public -> write (public / "_headers") "/*\n")))
+      [ "build"; "check" ];
+    if Sys.os_type <> "Win32" then begin
+      expect_rejected "6.4 reject a symbolic link to a file outside the input"
+        "public/leak.txt" (run "build" (fun public ->
+          Unix.symlink (outside / "secret.txt") (public / "leak.txt")));
+      expect_rejected "6.4 reject a symbolic link to a directory outside the input"
+        "public/leak" (run "build" (fun public ->
+          Unix.symlink outside (public / "leak")));
+      expect_rejected "6.4 reject a linked public directory" "public"
+        (run ~make_public:false "build" (fun public -> Unix.symlink outside public));
+      expect_rejected "6.5 a FIFO must be rejected without blocking"
+        "public/blocked.pipe" (run "build" (fun public ->
+          Unix.mkfifo (public / "blocked.pipe") 0o600))
+    end);
+  print_endline "PASS: CLI public directory tests"
 
 let test_lighthouse_tasks () =
   let tokens_json = In_channel.with_open_text "../design/tokens.json" In_channel.input_all in
@@ -957,6 +1098,7 @@ let () =
   test_color_tokens_and_site_builder ();
   test_adapters ();
   test_cli_assets ();
+  test_cli_public ();
 
   test_lighthouse_tasks ();
   if Array.length Sys.argv <> 3 then fail "Expected CLI executable and tokens path";

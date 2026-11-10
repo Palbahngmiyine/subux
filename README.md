@@ -23,6 +23,15 @@ dune exec subux -- build -i site -o _site
 Set `baseUrl` in `site/subux.json` to the real site address so canonical URLs
 and the sitemap use it. `dune exec subux -- help` lists every command and option.
 
+## Static files
+
+Files in `public/` inside the input directory are copied to the site root
+unchanged, so `site/public/favicons/favicon.ico` is served at
+`/favicons/favicon.ico`. Dotfiles are skipped, except the `.well-known`
+directory. The build fails when a static file would replace generated output
+such as `index.html`, `_headers`, or `robots.txt`, and when `public/` contains a
+symbolic link or a special file.
+
 ## Development
 
 ```sh
