@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/Palbahngmiyine/subux/compare/v0.1.0...v0.2.0) (2026-11-10)
+
+
+### Features
+
+* headLinks로 아이콘과 manifest 링크 지정 ([faaa754](https://github.com/Palbahngmiyine/subux/commit/faaa754b80362a94ebfed862ab83c04b44df9d42))
+* public 디렉터리 파일을 결과물에 그대로 복사 ([2137b2b](https://github.com/Palbahngmiyine/subux/commit/2137b2bc9dba4dfa9fc3c531171c853bb0f198a9))
+* public 정적 파일 복사와 headLinks 지원 ([4ab0d62](https://github.com/Palbahngmiyine/subux/commit/4ab0d622cd7b54c7d71ebfc8c013e41ae90bcbbc))
+
+
+### Bug Fixes
+
+* Markdown 탐색이 끊어진 링크·순환 링크·FIFO에서 멈추지 않게 함 ([72973d9](https://github.com/Palbahngmiyine/subux/commit/72973d9978697a55619849adb059d9c43446ae54))
+* public 경로 충돌을 대소문자 무시로 검사 ([f186298](https://github.com/Palbahngmiyine/subux/commit/f186298f9ad798bd53cde8bda97456b742a46f0d))
+* public 복사에서 점 파일을 건너뜀 ([e704520](https://github.com/Palbahngmiyine/subux/commit/e7045207f47adf98c1f0f745951b501092229967))
+
 ## 0.1.0 (2026-11-04)
 
 
