@@ -312,6 +312,32 @@ type sidebar_group = {
   items : sidebar_entry list;
 }
 
+type head_link = {
+  rel : string;
+  href : string;
+  link_type : string option;
+  sizes : string option;
+}
+
+let head_link_rels =
+  [ "icon"; "apple-touch-icon"; "apple-touch-icon-precomposed"; "manifest" ]
+
+let make_head_link ~rel ~href ~link_type ~sizes =
+  let printable s =
+    s <> "" && String.for_all (fun c -> c >= ' ' && c <= '~') s
+  in
+  let reject reason = Error (Config_error ("headLinks " ^ reason)) in
+  if not (List.mem rel head_link_rels) then
+    reject ("rel must be one of: " ^ String.concat ", " head_link_rels)
+  else if not (printable href
+               && Safe_url.is_safe_url ~allow_contact:false ~decode_entities:false href)
+  then reject "href must be a relative, http: or https: URL"
+  else if not (Option.fold ~none:true ~some:printable link_type) then
+    reject "type must be printable ASCII"
+  else if not (Option.fold ~none:true ~some:printable sizes) then
+    reject "sizes must be printable ASCII"
+  else Ok { rel; href; link_type; sizes }
+
 type site_mode =
   | Blog_mode
   | Docs_mode
@@ -334,6 +360,7 @@ type site_config = {
   custom_css : string option;
 
   inline_css : bool;
+  head_links : head_link list;
 }
 
 let default_blog_config =
@@ -371,6 +398,7 @@ let default_blog_config =
     custom_css = None;
 
     inline_css = true;
+    head_links = [];
   }
 
 let default_docs_config =
@@ -405,4 +433,5 @@ let default_docs_config =
     custom_css = None;
 
     inline_css = true;
+    head_links = [];
   }

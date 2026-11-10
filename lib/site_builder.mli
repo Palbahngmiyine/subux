@@ -80,5 +80,21 @@ val compile_site :
   source_file list ->
   (build_plan, Domain.build_error) result
 
+(** True for a relative output path of non-empty segments without [.], [..],
+    backslashes or control characters. *)
+val valid_artifact_path : string -> bool
+
+(** Add files from the site's public directory to [generated] without
+    rendering them. Each [out_path] is relative to the output root and content
+    is copied byte for byte. A public [_headers] is appended after the
+    generated rules; public [favicon.svg] and [robots.txt] replace the
+    generated defaults. Unsafe paths, any other collision with generated
+    output, and file/directory conflicts are [Config_error]s. Collisions are
+    detected ignoring ASCII case, as on case-insensitive file systems. *)
+val merge_public_files :
+  generated:output_artifact list ->
+  output_artifact list ->
+  (output_artifact list, Domain.build_error) result
+
 (** Low 32 bits of the 64-bit FNV-1a digest, as eight lowercase hex digits. *)
 val content_hash : string -> string

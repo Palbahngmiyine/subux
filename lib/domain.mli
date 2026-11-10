@@ -181,6 +181,23 @@ type sidebar_group = {
   items : sidebar_entry list;
 }
 
+(** A validated [<link>] for icons and the web app manifest. [rel] is one of
+    [icon], [apple-touch-icon], [apple-touch-icon-precomposed] or [manifest];
+    [href] is a relative, [http:] or [https:] URL; optional [link_type] and
+    [sizes] are printable ASCII. Values contain no control characters. *)
+type head_link = private {
+  rel : string;
+  href : string;
+  link_type : string option;
+  sizes : string option;
+}
+
+val make_head_link :
+  rel:string -> href:string -> link_type:string option -> sizes:string option ->
+  (head_link, build_error) result
+(** Reject any value outside the [head_link] contract with a [Config_error]
+    that names the [headLinks] setting. *)
+
 type site_mode =
   | Blog_mode       (** Tabbed blog & article collection layout *)
   | Docs_mode       (** Sidebar & hero documentation layout *)
@@ -202,6 +219,9 @@ type site_config = {
   custom_js : string option; (** Optional trusted module script content, loaded by the CLI. *)
   custom_css : string option; (** Optional trusted stylesheet content, loaded by the CLI. *)
   inline_css : bool; (** Inline the compiled theme in each page; defaults to true. *)
+  head_links : head_link list;
+      (** Emitted in every page head. Declaring an [icon] link replaces the
+          default [/favicon.svg] link. *)
 }
 
 val default_blog_config : site_config
