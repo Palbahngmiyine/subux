@@ -927,6 +927,10 @@ let test_cli_public_dir () =
     write (site ^ "/public/notes.md") "# Raw note\n";
     write (site ^ "/public/favicons/icon.png") "\x89PNG\000\255";
     write (site ^ "/public/_headers") "/service-worker.js\n  Cache-Control: no-store\n";
+    write (site ^ "/public/.DS_Store") "finder";
+    write (site ^ "/public/favicons/.DS_Store") "finder";
+    write (site ^ "/public/.well-known/security.txt") "Contact: mailto:a@example.com\n";
+    write (site ^ "/public/.well-known/.draft") "unpublished";
     config "{\"baseUrl\":\"https://example.com\"}";
     ignore (build ~expect:0 "7.1 default public directory");
     assert_eq_str (read "out/favicons/icon.png") "\x89PNG\000\255" "7.1 public bytes copied";
@@ -936,6 +940,21 @@ let test_cli_public_dir () =
     assert_contains (read "out/_headers") "X-Frame-Options: DENY" "7.1 generated headers kept";
     assert_true (String.ends_with ~suffix:"\n/service-worker.js\n  Cache-Control: no-store\n"
                    (read "out/_headers")) "7.1 public headers appended";
+    assert_true (not (Sys.file_exists (path "out/.DS_Store"))) "7.8 root dotfiles are not published";
+    assert_true (not (Sys.file_exists (path "out/favicons/.DS_Store")))
+      "7.8 nested dotfiles are not published";
+    assert_eq_str (read "out/.well-known/security.txt") "Contact: mailto:a@example.com\n"
+      "7.8 .well-known is still published";
+    assert_true (not (Sys.file_exists (path "out/.well-known/.draft")))
+      "7.8 dotfiles inside .well-known are not published";
+    if Sys.os_type <> "Win32" then begin
+      (* A skipped entry is never opened, so a hidden link cannot leak a file. *)
+      write "secret.txt" "outside the input";
+      Unix.symlink (path "secret.txt") (path (site ^ "/public/.hidden-link"));
+      ignore (build ~out:"out-hidden" ~expect:0 "7.8 a hidden link is skipped, not followed");
+      assert_true (not (Sys.file_exists (path "out-hidden/.hidden-link")))
+        "7.8 a hidden link is not published"
+    end;
     write (site ^ "/static/robots.txt") "User-agent: *\nDisallow: /\n";
     config "{\"publicDir\":\"static\"}";
     ignore (build ~out:"out2" ~expect:0 "7.2 configured public directory");

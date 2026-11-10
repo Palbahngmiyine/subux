@@ -575,7 +575,10 @@ let resolve_public_dir (input_dir : string) : (string option, build_error) resul
         | Unix.Unix_error (err, fn, arg) -> Error (unix_error (err, fn, arg))
 
 (* Read every regular file under [root] without following links. Links and
-   special files are rejected before opening, so a FIFO cannot block a build. *)
+   special files are rejected before opening, so a FIFO cannot block a build.
+   Entries whose name starts with a dot are skipped without being inspected,
+   which keeps editor and OS metadata such as .DS_Store out of the site; the
+   .well-known directory is the one exception. *)
 let read_public_files (root : string) :
     (Site_builder.output_artifact list, build_error) result =
   let open Result_syntax in
@@ -583,7 +586,12 @@ let read_public_files (root : string) :
     let full = if rel = "" then root else Filename.concat root rel in
     match (Unix.lstat full).Unix.st_kind with
     | Unix.S_DIR ->
-        let names = Sys.readdir full |> Array.to_list |> List.sort String.compare in
+        let names =
+          Sys.readdir full |> Array.to_list
+          |> List.filter (fun name ->
+                 name = ".well-known" || not (String.starts_with ~prefix:"." name))
+          |> List.sort String.compare
+        in
         let+ nested = map_list (fun name ->
           walk (if rel = "" then name else rel ^ "/" ^ name)) names in
         List.concat nested

@@ -34,6 +34,8 @@ directory inside the input, or `null` to copy nothing.
 - `public/favicon.svg` and `public/robots.txt` replace the generated defaults.
 - Any other file that would overwrite generated output, even with different
   letter case, stops the build.
+- Files and directories whose name starts with a dot, such as `.DS_Store`, are
+  not copied. `.well-known` is the exception.
 - Symbolic links and special files are rejected.
 
 To link icons or a web app manifest from every page, list them in `headLinks`:
