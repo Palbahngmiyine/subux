@@ -23,6 +23,21 @@ dune exec subux -- build -i site -o _site
 Set `baseUrl` in `site/subux.json` to the real site address so canonical URLs
 and the sitemap use it. `dune exec subux -- help` lists every command and option.
 
+## Installing a release
+
+Each [release](https://github.com/Palbahngmiyine/subux/releases) carries an
+archive per platform and `subux-<version>.tgz`, an npm-format package that
+holds all four executables. A site that already uses a Node package manager can
+pin Subux as a development dependency and needs no OCaml toolchain:
+
+```sh
+pnpm add -D https://github.com/Palbahngmiyine/subux/releases/download/v<version>/subux-<version>.tgz
+pnpm exec subux build -i site -o dist
+```
+
+The lockfile records the package's integrity hash. The `subux` command needs
+Node 18 or later and runs the executable for the current platform.
+
 ## Static files
 
 Files in the input's `public/` directory are copied to the output root
