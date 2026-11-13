@@ -422,15 +422,16 @@ let ends_yaml_key (line : string) (j : int) : bool =
   line.[j] = ':' && (j + 1 = String.length line || is_blank line.[j + 1])
 
 (* A key runs to the first colon that a blank or the end of the line follows,
-   so it may hold spaces and inner colons. Returns the index after the colon. *)
-let yaml_key_end (line : string) (i : int) : int option =
+   so it may hold spaces and inner colons. [Ok] is the index after the colon.
+   [Error] is where the scan stopped: no key starts between [i] and there. *)
+let yaml_key_end (line : string) (i : int) : (int, int) result =
   let len = String.length line in
   let rec scan j =
-    if j >= len || not (is_yaml_key_char line.[j]) then None
-    else if ends_yaml_key line j then Some (j + 1)
+    if j >= len || not (is_yaml_key_char line.[j]) then Error j
+    else if ends_yaml_key line j then Ok (j + 1)
     else scan (j + 1)
   in
-  if is_yaml_key_start line.[i] then scan (i + 1) else None
+  if is_yaml_key_start line.[i] then scan (i + 1) else Error i
 
 let yaml_quoted_key_end (line : string) (i : int) : int option =
   let len = String.length line in
@@ -503,8 +504,9 @@ let highlight_yaml_line (line : string) : string =
   let plain i j = Buffer.add_string buf (escape_code_text (String.sub line i (j - i))) in
   let token cls i j = Buffer.add_string buf (token_span cls (String.sub line i (j - i))) in
   let is_flow_mark = function ',' | '[' | ']' | '{' | '}' -> true | _ -> false in
-  (* [depth] counts the flow collections open at [i]. *)
-  let rec loop i depth =
+  (* [depth] counts the flow collections open at [i]. No key starts before
+     [no_key], so a line of plain words is scanned for a key only once. *)
+  let rec loop i depth no_key =
     if i < len then begin
       let c = line.[i] in
       let ends_scalar j = j = len || is_blank line.[j] || is_flow_mark line.[j] in
@@ -517,9 +519,15 @@ let highlight_yaml_line (line : string) : string =
             else None)
           yaml_literals
       in
-      let key_end = if c = '"' || c = '\'' then yaml_quoted_key_end line i else yaml_key_end line i in
-      let next cls j = token cls i j; loop j depth in
-      if is_blank c then begin plain i (i + 1); loop (i + 1) depth end
+      let key_end, no_key =
+        if c = '"' || c = '\'' then (yaml_quoted_key_end line i, no_key)
+        else if i < no_key then (None, no_key)
+        else match yaml_key_end line i with
+          | Ok j -> (Some j, no_key)
+          | Error stop -> (None, stop)
+      in
+      let next cls j = token cls i j; loop j depth no_key in
+      if is_blank c then begin plain i (i + 1); loop (i + 1) depth no_key end
       else match key_end with
         | Some j -> next "attr" j
         | None ->
@@ -531,10 +539,12 @@ let highlight_yaml_line (line : string) : string =
                   match yaml_number_end line i with
                   | Some j -> next "number" j
                   | None ->
-                      if c = '[' || c = '{' then begin plain i (i + 1); loop (i + 1) (depth + 1) end
-                      else if depth > 0 && c = ',' then begin plain i (i + 1); loop (i + 1) depth end
+                      if c = '[' || c = '{' then begin
+                        plain i (i + 1); loop (i + 1) (depth + 1) no_key end
+                      else if depth > 0 && c = ',' then begin
+                        plain i (i + 1); loop (i + 1) depth no_key end
                       else if depth > 0 && (c = ']' || c = '}') then begin
-                        plain i (i + 1); loop (i + 1) (depth - 1) end
+                        plain i (i + 1); loop (i + 1) (depth - 1) no_key end
                       else if c = '"' || c = '\'' then next "string" (yaml_quoted_end line i)
                       else
                         let rec scalar_end j =
@@ -547,7 +557,7 @@ let highlight_yaml_line (line : string) : string =
   in
   if len >= 3 && String.sub line 0 3 = "---" && String.trim line = "---" then begin
     token "meta" 0 3; plain 3 len end
-  else loop 0 0;
+  else loop 0 0 0;
   Buffer.contents buf
 
 let highlight_code_line (lang : string) (line : string) : string =
@@ -567,6 +577,7 @@ let highlight_code_line (lang : string) (line : string) : string =
     (* A shell word runs through dots and slashes, so "local" in a host name
        or a path is not the keyword. *)
     let is_word_cont c = is_ident_cont c || (shell && (c = '.' || c = '/')) in
+    let starts_plain_shell_word c = shell && (is_digit c || c = '.' || c = '/') in
     let rec loop i =
       if i >= len then Buffer.contents buf
       else
@@ -611,8 +622,8 @@ let highlight_code_line (lang : string) (line : string) : string =
           Buffer.add_string buf (escape_code_text str_token);
           Buffer.add_string buf "</span>";
           loop after_quote
-        else if is_digit c && shell then begin
-          (* A shell reads digits as part of a word: a port, an address. *)
+        else if starts_plain_shell_word c then begin
+          (* A shell reads these as one word: a port, an address, a path. *)
           let rec find_word_end j =
             if j < len && is_word_cont line.[j] then find_word_end (j + 1) else j
           in

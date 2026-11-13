@@ -300,7 +300,7 @@ let test_markdown_rendering () =
   let shell_code =
     code "bash"
       [ "curl http://10.0.0.1:80/a//b # note"; "echo $# x#y"; "cd /usr/local/bin";
-        "ping api.local"; "if true; then exit 1; fi" ]
+        "ls /export ../local ./done"; "ping api.local"; "if true; then exit 1; fi" ]
   in
   List.iter
     (fun (expected, message) ->
@@ -309,6 +309,7 @@ let test_markdown_rendering () =
       ("curl http://10.0.0.1:80/a//b " ^ token "comment" "# note", "shell URL and port stay plain");
       (token "built_in" "echo" ^ " $# x#y", "shell # inside a word is not a comment");
       (token "built_in" "cd" ^ " /usr/local/bin", "shell path holds no keyword");
+      ("ls /export ../local ./done", "shell path that starts with a keyword name");
       ("ping api.local", "shell host name holds no keyword");
       ( token "keyword" "if" ^ " " ^ token "literal" "true" ^ "; " ^ token "keyword" "then" ^ " "
         ^ token "built_in" "exit" ^ " 1; " ^ token "keyword" "fi",
@@ -363,6 +364,62 @@ let test_markdown_rendering () =
     "2.6.3 JSON punctuation, literal and negative number";
   assert_not_contains (code "js" [ "f({a: [1]})" ]) "hljs-punctuation"
     "2.6.3 punctuation tokens are JSON only";
+
+  (* 2.6.4 tokens only wrap code text: without the token tags every line is
+     its escaped source, whatever it holds *)
+  let escaped text =
+    String.concat "&#x3C;"
+      (String.split_on_char '<' (String.concat "&amp;" (String.split_on_char '&' text)))
+  in
+  let strip_tokens html =
+    let len = String.length html in
+    let buf = Buffer.create len in
+    let at i prefix =
+      i + String.length prefix <= len && String.sub html i (String.length prefix) = prefix
+    in
+    let rec loop i =
+      if i < len then
+        if at i "</span>" then loop (i + 7)
+        else if at i "<span class=\"hljs-" then loop (String.index_from html i '>' + 1)
+        else begin Buffer.add_char buf html.[i]; loop (i + 1) end
+    in
+    loop 0;
+    Buffer.contents buf
+  in
+  let code_text lang html =
+    let open_tag = "<code class=\"hljs language-" ^ lang ^ "\">" in
+    let rec find i =
+      if i + String.length open_tag > String.length html then fail ("2.6.4 no " ^ lang ^ " code block")
+      else if String.sub html i (String.length open_tag) = open_tag then i + String.length open_tag
+      else find (i + 1)
+    in
+    let start = find 0 in
+    let rec close i =
+      if String.sub html i 13 = "</code></pre>" then i else close (i + 1)
+    in
+    String.sub html start (close start - start)
+  in
+  let odd_lines =
+    [ "<script>alert(1)</script>&amp;"; "k: <b>&"; "<b>: v"; "- <b>"; "\"<b>\": '<b>'"; "# <b> &";
+      "[<b>, {a: <b>}]"; "x // <b>"; "echo \"<b>\" # <b>"; "{\"<b>\": [true, -1, <b>]}";
+      "true<b>"; "1<b>"; " "; "\t"; "-"; "- "; "--"; "---"; "--- "; "---x"; "\""; "'"; "\"\\";
+      "'a''"; "0x"; "1e"; "1e+"; "-."; "."; ":"; "a:"; ": a"; "]"; "}"; "[[{"; "한글: <값>" ]
+  in
+  List.iter
+    (fun lang ->
+      assert_eq_str
+        (strip_tokens (code_text lang (code lang odd_lines)))
+        (String.concat "" (List.map (fun line -> escaped line ^ "\n") odd_lines))
+        ("2.6.4 " ^ lang ^ " code text escaped once inside and outside tokens"))
+    [ "yaml"; "bash"; "json"; "js"; "python" ];
+
+  (* 2.6.5 a long line of plain words is scanned for a key once, not per word *)
+  let words = String.concat " " (List.init 40000 (fun _ -> "word")) in
+  let started = Sys.time () in
+  let long_yaml = code "yaml" [ "description: " ^ words ] in
+  assert_contains long_yaml (attr "description:" ^ " " ^ str "word" ^ " " ^ str "word")
+    "2.6.5 long YAML line tokens";
+  assert_true (Sys.time () -. started < 2.0) "2.6.5 long YAML line renders in linear time";
 
   (* 2.7 footnotes retain target links and plain-text hover content inside callouts *)
   let html_fn =
@@ -917,6 +974,15 @@ let test_site_options () =
   in
   check_addresses (build config) ~suffix:"" "9.5 default";
   check_addresses (build { config with trailing_slash = true }) ~suffix:"/" "9.5 trailing slash";
+  (* A slug named index already has the address "/". *)
+  let rooted = compile { config with trailing_slash = true }
+      [ post; { collection = "tech"; rel_path = "tech/index.MD"; raw_markdown = "# Index\n" } ] in
+  assert_contains (find rooted "sitemap.xml") "<loc>https://example.com/</loc>" "9.5 index address";
+  assert_not_contains (find rooted "sitemap.xml") "//</loc>" "9.5 index address has one slash";
+  List.iter (fun (a : Site_builder.output_artifact) ->
+    if Filename.check_suffix a.out_path ".html" then
+      assert_not_contains a.content {|href="https://example.com//"|}
+        ("9.5 one slash in the canonical link of " ^ a.out_path)) rooted.artifacts;
   let docs = compile { default_docs_config with base_url = "https://docs.example.com/"; trailing_slash = true }
       [ { collection = "contents"; rel_path = "contents/index.md"; raw_markdown = "# Home\n" };
         { collection = "contents"; rel_path = "contents/guide.md"; raw_markdown = "# Guide\n" } ] in
@@ -1109,9 +1175,23 @@ let test_cli_bundled_tokens () =
       "10.1 names the missing tokens";
     write "release/design/tokens.json" tokens;
     ignore (check "10.2 tokens beside the executable" 0);
+    if Sys.os_type <> "Win32" then begin
+      Unix.mkdir (path "bin") 0o700;
+      Unix.symlink (path "release/subux") (path "bin/subux");
+      let status, log = run_cli_bounded (path "bin/subux") ~log:(path "output.log")
+          [ "check"; "-i"; path "site" ] in
+      assert_true (status = Some (Unix.WEXITED 0)) ("10.2 executable reached through a link\n" ^ log)
+    end;
+    (* Tokens in the working directory come before the bundled ones. *)
+    List.iter (fun dir -> Unix.mkdir (path dir) 0o700) [ "cwd"; "cwd/design" ];
+    write "cwd/design/tokens.json" "{";
+    let home = Sys.getcwd () in
+    Sys.chdir (path "cwd");
+    Fun.protect ~finally:(fun () -> Sys.chdir home) (fun () ->
+      ignore (check "10.3 tokens in the working directory take precedence" 1));
     Unix.mkdir (path "site/design") 0o700;
     write "site/design/tokens.json" "{";
-    ignore (check "10.3 tokens in the input take precedence" 1));
+    ignore (check "10.4 tokens in the input take precedence" 1));
   print_endline "PASS: CLI bundled tokens tests"
 
 (* Public files are copied, never rendered, and links, special files and

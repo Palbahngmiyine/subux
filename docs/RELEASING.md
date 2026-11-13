@@ -49,8 +49,9 @@ checks if merges must wait for CI.
 
 Each archive includes `subux`, `design/tokens.json`, both project and cmarkit
 licenses, `version.txt`, `README.md`, and a `BUILD-INFO` commit/platform record.
-Extract it and run its `subux` from any directory: a site without design tokens
-of its own gets the ones beside the executable. OCaml and Dune are only needed
+Extract it and run its `subux` from any directory. Without `--tokens`, Subux
+reads `design/tokens.json` from the input directory, then from the working
+directory, then from beside the executable. OCaml and Dune are only needed
 to build from source. Linux packages require glibc 2.35 or newer; macOS packages
 target macOS 15. These are native builds, not cross-compilations.
 

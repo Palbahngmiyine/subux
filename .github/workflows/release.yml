@@ -104,6 +104,7 @@ jobs:
           test -s "$npm_package"
           test -s "$npm_package.sha256"
           tar -xOf "$npm_package" package/package.json | jq -e --arg version "$version" '.version == $version'
+          tar -tf "$npm_package" package/bin/subux.js
           for platform in linux-x86_64 linux-arm64 darwin-x86_64 darwin-arm64; do
             name="subux-${version}-${platform}"
             test -s "$name.tar.gz"
@@ -112,6 +113,9 @@ jobs:
             tar -xOf "$name.tar.gz" "$name/version.txt" | grep -Fx "$version"
             tar -xOf "$npm_package" "package/platforms/$platform/BUILD-INFO" | grep -Fx "commit=$RELEASE_SHA"
             tar -xOf "$npm_package" "package/platforms/$platform/version.txt" | grep -Fx "$version"
+            archive_sum=$(tar -xOf "$name.tar.gz" "$name/subux" | shasum -a 256)
+            package_sum=$(tar -xOf "$npm_package" "package/platforms/$platform/subux" | shasum -a 256)
+            test "$archive_sum" = "$package_sum"
           done
           test "$(find . -name '*.tar.gz' | wc -l)" -eq 4
           test "$(find . -name '*.tgz' | wc -l)" -eq 1
