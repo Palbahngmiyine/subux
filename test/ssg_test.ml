@@ -1071,6 +1071,44 @@ let test_cli_assets () =
     if expected <> 0 then assert_contains log key (label ^ " identifies the asset field")) results;
   print_endline "PASS: CLI custom asset boundary tests"
 
+(* Without --tokens and without tokens in the input or the working directory,
+   the CLI reads the tokens shipped beside the executable. *)
+let test_cli_bundled_tokens () =
+  let cli = Unix.realpath Sys.argv.(1) in
+  let tokens = In_channel.with_open_bin "../design/tokens.json" In_channel.input_all in
+  let root = Filename.temp_file "subux-bundled-" "" in
+  Sys.remove root;
+  Unix.mkdir root 0o700;
+  let path rel = Filename.concat root rel in
+  let write rel content =
+    Out_channel.with_open_bin (path rel) (fun ch -> Out_channel.output_string ch content)
+  in
+  let rec remove p =
+    match (Unix.lstat p).Unix.st_kind with
+    | Unix.S_DIR -> Array.iter (fun n -> remove (Filename.concat p n)) (Sys.readdir p); Unix.rmdir p
+    | _ -> Unix.unlink p
+  in
+  Fun.protect ~finally:(fun () -> remove root) (fun () ->
+    List.iter (fun dir -> Unix.mkdir (path dir) 0o700) [ "release"; "release/design"; "site" ];
+    write "release/subux" (In_channel.with_open_bin cli In_channel.input_all);
+    Unix.chmod (path "release/subux") 0o700;
+    write "site/post.md" "# Post\n";
+    let check label expected =
+      let status, log = run_cli_bounded (path "release/subux") ~log:(path "output.log")
+          [ "check"; "-i"; path "site" ] in
+      assert_true (status = Some (Unix.WEXITED expected)) (label ^ "\n" ^ log);
+      log
+    in
+    assert_true (not (Sys.file_exists "design/tokens.json")) "10 no tokens in the working directory";
+    assert_contains (check "10.1 no tokens anywhere" 1) "design/tokens.json"
+      "10.1 names the missing tokens";
+    write "release/design/tokens.json" tokens;
+    ignore (check "10.2 tokens beside the executable" 0);
+    Unix.mkdir (path "site/design") 0o700;
+    write "site/design/tokens.json" "{";
+    ignore (check "10.3 tokens in the input take precedence" 1));
+  print_endline "PASS: CLI bundled tokens tests"
+
 (* Public files are copied, never rendered, and links, special files and
    paths outside the input directory are rejected without blocking. *)
 let test_cli_public_dir () =
@@ -1410,6 +1448,7 @@ let () =
   test_head_links ();
   test_site_options ();
   test_cli_assets ();
+  test_cli_bundled_tokens ();
   test_cli_public_dir ();
   test_cli_discovery_links ();
 

@@ -329,8 +329,12 @@ let resolve_tokens_path (explicit : string option) (input_dir : string) : string
       let candidate1 = Filename.concat input_dir "design/tokens.json" in
       let candidate2 = Filename.concat input_dir "tokens.json" in
       let candidate3 = "design/tokens.json" in
+      (* A release ships its tokens beside the executable, so it runs from
+         any directory. *)
+      let bundled = Filename.concat (Filename.dirname Sys.executable_name) candidate3 in
       if Sys.file_exists candidate1 then candidate1
       else if Sys.file_exists candidate2 then candidate2
+      else if Sys.file_exists bundled && not (Sys.file_exists candidate3) then bundled
       else candidate3
 
 type cli_options = {
