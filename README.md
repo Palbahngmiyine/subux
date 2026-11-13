@@ -52,6 +52,18 @@ To link icons or a web app manifest from every page, list them in `headLinks`:
 `manifest`, and `href` must be a relative, `http:` or `https:` URL. Declaring an
 `icon` replaces the default `/favicon.svg` link.
 
+## Page options
+
+These `subux.json` settings change what every page loads and how it names
+itself. Without them the output stays as it was.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `themeColor` | none | A hex color such as `"#7fcfff"` for the browser UI. It replaces the light and dark `theme-color` pair. |
+| `fontDisplay` | `"optional"` | `"swap"` loads the web font stylesheet with the page, so a first visit shows the web font once it arrives. `"optional"` never blocks the page, and a first visit may keep the fallback font. |
+| `lazyImages` | `true` | `false` loads Markdown images with the page instead of when they are scrolled near. |
+| `trailingSlash` | `false` | `true` ends each page's own address with a slash in its canonical link, Open Graph URL, JSON-LD and sitemap entry, for hosts that serve `post/index.html` at `/post/`. Links between pages are unchanged. |
+
 ## Development
 
 ```sh

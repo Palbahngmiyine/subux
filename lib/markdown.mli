@@ -30,5 +30,9 @@ type rendered_markdown = {
     the template already renders, including a Setext heading. Its unique ID is
     retained in [page_title_id] and reserved against subsequent body headings.
     Heading anchors also avoid template navigation and outline control IDs.
-    Other body content and later headings are preserved. *)
-val render : ?heading_base:int -> ?page_title:string -> string -> rendered_markdown
+    Other body content and later headings are preserved.
+
+    Images are deferred with [loading="lazy"] and [decoding="async"] unless
+    [lazy_images] is false. *)
+val render :
+  ?heading_base:int -> ?page_title:string -> ?lazy_images:bool -> string -> rendered_markdown

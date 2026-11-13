@@ -338,6 +338,23 @@ let make_head_link ~rel ~href ~link_type ~sizes =
     reject "sizes must be printable ASCII"
   else Ok { rel; href; link_type; sizes }
 
+type hex_color = string
+
+let make_theme_color (value : string) : (hex_color, build_error) result =
+  let is_hex = function
+    | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+    | _ -> false
+  in
+  let len = String.length value in
+  if List.mem len [ 4; 5; 7; 9 ] && value.[0] = '#'
+     && String.for_all is_hex (String.sub value 1 (len - 1))
+  then Ok value
+  else Error (Config_error "themeColor must be a hex color such as #7fcfff")
+
+type font_display =
+  | Font_optional
+  | Font_swap
+
 type site_mode =
   | Blog_mode
   | Docs_mode
@@ -361,6 +378,10 @@ type site_config = {
 
   inline_css : bool;
   head_links : head_link list;
+  theme_color : hex_color option;
+  font_display : font_display;
+  lazy_images : bool;
+  trailing_slash : bool;
 }
 
 let default_blog_config =
@@ -399,6 +420,10 @@ let default_blog_config =
 
     inline_css = true;
     head_links = [];
+    theme_color = None;
+    font_display = Font_optional;
+    lazy_images = true;
+    trailing_slash = false;
   }
 
 let default_docs_config =
@@ -434,4 +459,8 @@ let default_docs_config =
 
     inline_css = true;
     head_links = [];
+    theme_color = None;
+    font_display = Font_optional;
+    lazy_images = true;
+    trailing_slash = false;
   }

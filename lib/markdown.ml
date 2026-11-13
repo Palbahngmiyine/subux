@@ -806,6 +806,7 @@ type render_state = {
   mutable has_mermaid : bool;
   mutable footnote_order : string list;
   mutable footnotes : footnote_entry String_map.t;
+  lazy_images : bool;
 }
 
 let rstate : render_state C.State.t = C.State.make ()
@@ -816,7 +817,7 @@ let reserved_heading_ids = String_set.of_list
      "jt-main-nav"; "jt-menu-toggle"; "jt-sidebar"; "jt-sidebar-toggle";
      "jt-sidebar-backdrop"; "jt-outline"; "jt-outline-toggle"]
 
-let init_render_state ~page_title_id c _doc =
+let init_render_state ~page_title_id ~lazy_images c _doc =
   C.State.set c rstate
     (Some
        {
@@ -826,6 +827,7 @@ let init_render_state ~page_title_id c _doc =
          has_mermaid = false;
          footnote_order = [];
          footnotes = String_map.empty;
+         lazy_images;
        })
 
 let available_heading_id ids (base_id : string) : string =
@@ -1014,7 +1016,9 @@ let render_inline c = function
             && Safe_url.is_safe_url ~allow_contact:false ~decode_entities:false
                  encoded_dest
           in
-          C.string c "<img loading=\"lazy\" decoding=\"async\"";
+          C.string c
+            (if (C.State.get c rstate).lazy_images then "<img loading=\"lazy\" decoding=\"async\""
+             else "<img");
           begin match String.split_on_char 'x' title with
           | [w; h] ->
               begin match int_of_string_opt w, int_of_string_opt h with
@@ -1463,7 +1467,7 @@ let remove_page_title title doc =
   in
   (Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) body, heading)
 
-let render ?heading_base ?page_title (md : string) : rendered_markdown =
+let render ?heading_base ?page_title ?(lazy_images = true) (md : string) : rendered_markdown =
   let parsed = Doc.of_string ~heading_auto_ids:true ~strict:false md in
   let transformed = transform_doc md parsed in
   let transformed, title_heading = match page_title with
@@ -1475,7 +1479,7 @@ let render ?heading_base ?page_title (md : string) : rendered_markdown =
     | Some base -> normalize_headings base transformed in
   let captured_state : render_state option ref = ref None in
   let init_context c d =
-    init_render_state ~page_title_id c d;
+    init_render_state ~page_title_id ~lazy_images c d;
     captured_state := Some (C.State.get c rstate)
   in
   let renderer =

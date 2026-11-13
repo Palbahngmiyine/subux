@@ -823,6 +823,105 @@ let test_head_links () =
       "8.6 apple touch icon") pages;
   print_endline "PASS: Head link tests"
 
+(* themeColor, fontDisplay, lazyImages and trailingSlash *)
+let test_site_options () =
+  (* 9.1 themeColor is a hex color and nothing else *)
+  List.iter (fun color ->
+    match make_theme_color color with
+    | Ok accepted -> assert_eq_str (accepted :> string) color "9.1 hex color kept as written"
+    | Error e -> fail ("9.1 accept " ^ color ^ ": " ^ error_to_string e))
+    [ "#abc"; "#abcd"; "#7fcfff"; "#7FCFFF"; "#7fcfff80" ];
+  List.iter (fun color ->
+    let label = "9.1 reject " ^ String.escaped color in
+    match make_theme_color color with
+    | Error (Config_error reason) -> assert_contains reason "themeColor" (label ^ " names the setting")
+    | Error e -> fail (label ^ ": " ^ error_to_string e)
+    | Ok _ -> fail label)
+    [ ""; "#"; "red"; "#12"; "#12345"; "#1234567"; "#gggggg"; "7fcfff"; " #fff"; "#fff\n";
+      "rgb(0,0,0)"; "#fff\"><script>alert(1)</script>" ];
+
+  let tokens_json = In_channel.with_open_bin "../design/tokens.json" In_channel.input_all in
+  let compile config sources =
+    match Site_builder.compile_site ~config ~tokens_json sources with
+    | Ok plan -> plan
+    | Error e -> fail ("9 compile: " ^ error_to_string e)
+  in
+  let find (plan : Site_builder.build_plan) path =
+    match List.find_opt (fun (a : Site_builder.output_artifact) -> a.out_path = path) plan.artifacts with
+    | Some a -> a.content
+    | None -> fail ("9 missing " ^ path)
+  in
+  let each_page (plan : Site_builder.build_plan) check =
+    let pages = List.filter (fun (a : Site_builder.output_artifact) ->
+      Filename.check_suffix a.out_path ".html") plan.artifacts in
+    assert_true (List.length pages >= 3) "9 home, article and 404 pages rendered";
+    List.iter (fun (a : Site_builder.output_artifact) -> check a.out_path a.content) pages
+  in
+  let post : Site_builder.source_file =
+    { collection = "articles"; rel_path = "articles/2026/post.md";
+      raw_markdown = "---\ntitle: Post\ndate: 2026-01-02\n---\n\n![alt](/a.png)\n\n![sized](/b.png \"800x450\")\n" }
+  in
+  let config = { default_blog_config with base_url = "https://example.com" } in
+  let build config = compile config [ post ] in
+
+  (* 9.2 themeColor replaces the light and dark pair on every page *)
+  let theme_color = Result.get_ok (make_theme_color "#7fcfff") in
+  each_page (build { config with theme_color = Some theme_color }) (fun path html ->
+    assert_contains html {|<meta name="theme-color" content="#7fcfff">|} ("9.2 theme color on " ^ path);
+    assert_not_contains html {|name="theme-color" media=|} ("9.2 default pair replaced on " ^ path));
+
+  (* 9.3 fontDisplay swap loads the font stylesheet with the page *)
+  let font = {|href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">|} in
+  each_page (build { config with font_display = Font_swap }) (fun path html ->
+    assert_contains html ({|<link rel="stylesheet" crossorigin="anonymous" |} ^ font)
+      ("9.3 font stylesheet on " ^ path);
+    assert_contains html {|rel="preconnect"|} ("9.3 font preconnect kept on " ^ path);
+    assert_not_contains html {|media="print"|} ("9.3 no deferred font stylesheet on " ^ path);
+    assert_not_contains html {|as="style"|} ("9.3 no font preload on " ^ path);
+    assert_not_contains html "fontDisplay" ("9.3 font-display left to the stylesheet on " ^ path);
+    assert_not_contains html "<noscript><link" ("9.3 no no-JS font fallback on " ^ path));
+
+  (* 9.4 lazyImages false drops the loading hints and keeps the dimensions *)
+  let article plan = find plan "2026/post/index.html" in
+  assert_contains (article (build config)) {|<img loading="lazy" decoding="async" src="/a.png" alt="alt">|}
+    "9.4 images deferred by default";
+  let eager = article (build { config with lazy_images = false }) in
+  assert_contains eager {|<img src="/a.png" alt="alt">|} "9.4 image loads with the page";
+  assert_contains eager {|<img width="800" height="450" src="/b.png" alt="sized" title="800x450">|}
+    "9.4 dimensions kept";
+  assert_not_contains eager "<img loading" "9.4 no loading hint";
+  assert_eq_str (Markdown.render ~lazy_images:false "![a](/a.png)").html {|<p><img src="/a.png" alt="a"></p>|}
+    "9.4 renderer option";
+
+  (* 9.5 trailingSlash ends a page's own address with a slash *)
+  let check_addresses plan ~suffix label =
+    let url = "https://example.com/2026/post" ^ suffix in
+    let page = article plan in
+    assert_contains page ({|<link rel="canonical" href="|} ^ url ^ {|">|}) (label ^ " canonical link");
+    assert_contains page ({|<meta property="og:url" content="|} ^ url ^ {|">|}) (label ^ " Open Graph URL");
+    assert_contains page ({|"url":"|} ^ url ^ {|"|}) (label ^ " JSON-LD URL");
+    assert_contains (find plan "sitemap.xml") ("<loc>" ^ url ^ "</loc>") (label ^ " sitemap entry");
+    assert_contains (find plan "sitemap.xml") "<loc>https://example.com/</loc>" (label ^ " home sitemap entry");
+    List.iter (fun path ->
+      assert_contains (find plan path) {|<link rel="canonical" href="https://example.com/">|}
+        (label ^ " home address on " ^ path))
+      [ "index.html"; "articles/index.html" ];
+    assert_contains (find plan "404.html") {|<link rel="canonical" href="https://example.com/404.html">|}
+      (label ^ " file address");
+    assert_contains (find plan "index.html") {|href="/2026/post"|} (label ^ " links between pages")
+  in
+  check_addresses (build config) ~suffix:"" "9.5 default";
+  check_addresses (build { config with trailing_slash = true }) ~suffix:"/" "9.5 trailing slash";
+  let docs = compile { default_docs_config with base_url = "https://docs.example.com/"; trailing_slash = true }
+      [ { collection = "contents"; rel_path = "contents/index.md"; raw_markdown = "# Home\n" };
+        { collection = "contents"; rel_path = "contents/guide.md"; raw_markdown = "# Guide\n" } ] in
+  assert_contains (find docs "contents/guide/index.html")
+    {|<link rel="canonical" href="https://docs.example.com/contents/guide/">|} "9.5 docs page address";
+  assert_contains (find docs "sitemap.xml") "<loc>https://docs.example.com/contents/guide/</loc>"
+    "9.5 docs sitemap entry";
+  assert_not_contains (find docs "sitemap.xml") "//</loc>" "9.5 no doubled slash";
+  print_endline "PASS: Site option tests"
+
 let test_public_files () =
   let artifact out_path content : Site_builder.output_artifact = { out_path; content } in
   let generated = [ artifact "index.html" "home"; artifact "post/index.html" "post";
@@ -950,7 +1049,22 @@ let test_cli_assets () =
         ({|[{"rel":"icon","href":"/a.png","onload":"alert(1)"}]|}, 1, "unknown attribute");
         ({|[{"rel":"stylesheet","href":"/a.css"}]|}, 1, "rel outside the allowlist");
         ({|[{"rel":"icon","href":"javascript:alert(1)"}]|}, 1, "script URL");
-        ({|[{"rel":"icon","href":"/a.png","sizes":32}]|}, 1, "non-string attribute") ])
+        ({|[{"rel":"icon","href":"/a.png","sizes":32}]|}, 1, "non-string attribute") ]
+    @ List.map (fun (key, value, expected, label) ->
+        run key (Result.get_ok (Json_parser.parse value)) expected label)
+      [ ("themeColor", {|"#7fcfff"|}, 0, "hex color");
+        ("themeColor", "null", 0, "null keeps the default");
+        ("themeColor", {|"red"|}, 1, "color name");
+        ("themeColor", {|"#fff\"><script>alert(1)</script>"|}, 1, "markup");
+        ("themeColor", "8388607", 1, "non-string color");
+        ("fontDisplay", {|"optional"|}, 0, "optional");
+        ("fontDisplay", {|"swap"|}, 0, "swap");
+        ("fontDisplay", {|"block"|}, 1, "unknown font display");
+        ("fontDisplay", "true", 1, "non-string font display");
+        ("lazyImages", "false", 0, "eager images");
+        ("lazyImages", {|"false"|}, 1, "non-boolean flag");
+        ("trailingSlash", "true", 0, "trailing slash");
+        ("trailingSlash", "1", 1, "non-boolean flag") ])
   in
   List.iter (fun (label, key, status, log, expected) ->
     assert_true (status = Some (Unix.WEXITED expected)) (key ^ ": " ^ label ^ "\n" ^ log);
@@ -1294,6 +1408,7 @@ let () =
   test_adapters ();
   test_public_files ();
   test_head_links ();
+  test_site_options ();
   test_cli_assets ();
   test_cli_public_dir ();
   test_cli_discovery_links ();

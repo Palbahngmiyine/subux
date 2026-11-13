@@ -198,6 +198,22 @@ val make_head_link :
 (** Reject any value outside the [head_link] contract with a [Config_error]
     that names the [headLinks] setting. *)
 
+(** A CSS hex color: [#] followed by 3, 4, 6 or 8 hexadecimal digits. *)
+type hex_color = private string
+
+val make_theme_color : string -> (hex_color, build_error) result
+(** Reject any other value with a [Config_error] that names the [themeColor]
+    setting. *)
+
+(** How pages load the web font. *)
+type font_display =
+  | Font_optional
+      (** Without blocking the page. A visit that has not cached the font may
+          keep the fallback font. *)
+  | Font_swap
+      (** As a stylesheet of the page. Text shows in the fallback font until
+          the web font arrives, then swaps to it. *)
+
 type site_mode =
   | Blog_mode       (** Tabbed blog & article collection layout *)
   | Docs_mode       (** Sidebar & hero documentation layout *)
@@ -222,6 +238,16 @@ type site_config = {
   head_links : head_link list;
       (** Emitted in every page head. Declaring an [icon] link replaces the
           default [/favicon.svg] link. *)
+  theme_color : hex_color option;
+      (** Replaces the default light and dark [theme-color] pair. *)
+  font_display : font_display; (** Defaults to [Font_optional]. *)
+  lazy_images : bool;
+      (** Defer Markdown images until they are scrolled near; defaults to true. *)
+  trailing_slash : bool;
+      (** End each page's own address with a slash in its canonical link, Open
+          Graph URL, JSON-LD and sitemap entry, for hosts that serve
+          [dir/index.html] at [/dir/]. Links between pages are unchanged.
+          Defaults to false. *)
 }
 
 val default_blog_config : site_config

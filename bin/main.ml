@@ -274,6 +274,28 @@ let parse_config_json (base : site_config) (raw_json : string) :
               items
         | Some _ -> Error (Config_error "headLinks must be an array")
       in
+      let* theme_color =
+        match List.assoc_opt "themeColor" fields with
+        | None -> Ok base.theme_color
+        | Some Json_parser.Null -> Ok None
+        | Some (Json_parser.String color) -> Result.map Option.some (make_theme_color color)
+        | Some _ -> Error (Config_error "themeColor must be a string")
+      in
+      let* font_display =
+        match List.assoc_opt "fontDisplay" fields with
+        | None -> Ok base.font_display
+        | Some (Json_parser.String "optional") -> Ok Font_optional
+        | Some (Json_parser.String "swap") -> Ok Font_swap
+        | Some _ -> Error (Config_error "fontDisplay must be \"optional\" or \"swap\"")
+      in
+      let flag key default =
+        match List.assoc_opt key fields with
+        | None -> Ok default
+        | Some (Json_parser.Bool value) -> Ok value
+        | Some _ -> Error (Config_error (key ^ " must be true or false"))
+      in
+      let* lazy_images = flag "lazyImages" base.lazy_images in
+      let* trailing_slash = flag "trailingSlash" base.trailing_slash in
       Ok
         {
           base with
@@ -293,6 +315,10 @@ let parse_config_json (base : site_config) (raw_json : string) :
           nav;
           sidebar;
           head_links;
+          theme_color;
+          font_display;
+          lazy_images;
+          trailing_slash;
         }
   | _ -> Error (Config_error "subux.json root must be a JSON object")
 
