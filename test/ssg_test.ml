@@ -353,11 +353,16 @@ let test_markdown_rendering () =
       (attr "이름:" ^ " " ^ str "값", "non-ASCII key");
     ];
 
-  (* 2.6.3 JSON literals take the keyword color, and a number keeps its sign *)
-  assert_contains (code "json" [ "{\"ok\": false, \"n\": -1}" ])
-    ("{" ^ attr "\"ok\"" ^ ": " ^ token "literal" (token "keyword" "false") ^ ", " ^ attr "\"n\""
-     ^ ": " ^ num "-1" ^ "}\n")
-    "2.6.3 JSON literal and negative number";
+  (* 2.6.3 JSON punctuation is a token, literals take the keyword color, and a
+     number keeps its sign *)
+  let punct = token "punctuation" in
+  assert_contains (code "json" [ "{\"ok\": [false], \"n\": -1}" ])
+    (punct "{" ^ attr "\"ok\"" ^ punct ":" ^ " " ^ punct "["
+     ^ token "literal" (token "keyword" "false") ^ punct "]" ^ punct "," ^ " " ^ attr "\"n\""
+     ^ punct ":" ^ " " ^ num "-1" ^ punct "}" ^ "\n")
+    "2.6.3 JSON punctuation, literal and negative number";
+  assert_not_contains (code "js" [ "f({a: [1]})" ]) "hljs-punctuation"
+    "2.6.3 punctuation tokens are JSON only";
 
   (* 2.7 footnotes retain target links and plain-text hover content inside callouts *)
   let html_fn =

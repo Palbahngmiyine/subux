@@ -663,6 +663,11 @@ let highlight_code_line (lang : string) (line : string) : string =
           else Buffer.add_string buf (escape_code_text word);
           loop id_end
         end
+        else if norm_lang = "json" && (match c with '{' | '}' | '[' | ']' | ',' | ':' -> true | _ -> false)
+        then begin
+          Buffer.add_string buf (token_span "punctuation" (String.make 1 c));
+          loop (i + 1)
+        end
         else begin
           Buffer.add_string buf (escape_code_text (String.make 1 c));
           loop (i + 1)

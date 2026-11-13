@@ -21,8 +21,9 @@ type rendered_markdown = {
     document markers, comments, list bullets, keys, literals, numbers and
     scalars. A shell reads URLs, paths, numbers and dotted names as plain words
     and opens a comment with [#] only where a word starts. In other languages
-    [//] opens a comment unless it follows a colon, and never in Python. A JSON
-    literal nests a keyword token, so a theme colors it as highlight.js does.
+    [//] opens a comment unless it follows a colon, and never in Python. JSON
+    punctuation is a token of its own, and a JSON literal nests a keyword
+    token, so a theme styles both as it does highlight.js output.
 
     Without [heading_base], preserve the source heading levels. Site templates
     use [heading_base:2] beneath their own page title, which also normalizes
