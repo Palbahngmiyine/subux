@@ -392,26 +392,163 @@ let is_builtin (lang : string) (word : string) : bool =
       List.mem word [ "echo"; "cd"; "pwd"; "exit"; "printf"; "read"; "test" ]
   | _ -> false
 
+let is_shell_lang = function
+  | "sh" | "bash" | "shell" | "zsh" -> true
+  | _ -> false
+
+let is_blank = function
+  | ' ' | '\t' -> true
+  | _ -> false
+
+let is_ascii_word = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true
+  | _ -> false
+
+let token_span (cls : string) (text : string) : string =
+  "<span class=\"hljs-" ^ cls ^ "\">" ^ escape_code_text text ^ "</span>"
+
+(* YAML is tokenized a line at a time with the classes highlight.js gives the
+   same constructs. Flow punctuation stays unstyled, and the body of a block
+   scalar is read as ordinary lines. *)
+
+let is_yaml_key_start (c : char) : bool =
+  is_ascii_word c || c = '*' || c = '@' || Char.code c >= 0x80
+
+let is_yaml_key_char (c : char) : bool =
+  is_yaml_key_start c
+  || match c with ' ' | ':' | '(' | ')' | '.' | '/' | '-' -> true | _ -> false
+
+let ends_yaml_key (line : string) (j : int) : bool =
+  line.[j] = ':' && (j + 1 = String.length line || is_blank line.[j + 1])
+
+(* A key runs to the first colon that a blank or the end of the line follows,
+   so it may hold spaces and inner colons. Returns the index after the colon. *)
+let yaml_key_end (line : string) (i : int) : int option =
+  let len = String.length line in
+  let rec scan j =
+    if j >= len || not (is_yaml_key_char line.[j]) then None
+    else if ends_yaml_key line j then Some (j + 1)
+    else scan (j + 1)
+  in
+  if is_yaml_key_start line.[i] then scan (i + 1) else None
+
+let yaml_quoted_key_end (line : string) (i : int) : int option =
+  let len = String.length line in
+  let quote = line.[i] in
+  let rec scan j =
+    if j >= len then None
+    else if line.[j] = quote then
+      if j + 1 < len && ends_yaml_key line (j + 1) then Some (j + 2) else None
+    else if is_yaml_key_char line.[j] then scan (j + 1)
+    else None
+  in
+  if i + 1 < len && is_yaml_key_start line.[i + 1] then scan (i + 2) else None
+
+(* The index after the closing quote, or the end of an unclosed string. A
+   backslash escapes in double quotes; a doubled quote escapes in single. *)
+let yaml_quoted_end (line : string) (i : int) : int =
+  let len = String.length line in
+  let quote = line.[i] in
+  let rec scan j =
+    if j >= len then len
+    else if quote = '"' && line.[j] = '\\' then scan (j + 2)
+    else if line.[j] <> quote then scan (j + 1)
+    else if quote = '\'' && j + 1 < len && line.[j + 1] = '\'' then scan (j + 2)
+    else j + 1
+  in
+  scan (i + 1)
+
+(* A number has to stop at a word boundary. One may follow another directly,
+   so a dotted address or a date reads as a chain of numbers. *)
+let yaml_number_end (line : string) (i : int) : int option =
+  let len = String.length line in
+  let rec run accepts j = if j < len && accepts line.[j] then run accepts (j + 1) else j in
+  let is_hex = function
+    | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+    | _ -> false
+  in
+  let start = if line.[i] = '-' then i + 1 else i in
+  let int_end = run is_digit start in
+  let hex_end =
+    if int_end = start + 1 && line.[start] = '0' && int_end < len
+       && (line.[int_end] = 'x' || line.[int_end] = 'X')
+    then run is_hex (int_end + 1)
+    else int_end + 1
+  in
+  let fraction_end =
+    if int_end < len && line.[int_end] = '.' && (int_end > start || run is_digit (int_end + 1) > int_end + 1)
+    then run is_digit (int_end + 1)
+    else int_end
+  in
+  let exponent_end =
+    if fraction_end > start && fraction_end < len
+       && (line.[fraction_end] = 'e' || line.[fraction_end] = 'E')
+    then
+      let sign = fraction_end + 1 in
+      let digits = if sign < len && (line.[sign] = '+' || line.[sign] = '-') then sign + 1 else sign in
+      let stop = run is_digit digits in
+      if stop > digits then stop else fraction_end
+    else fraction_end
+  in
+  let is_word j = j < len && is_ascii_word line.[j] in
+  let bounded j = j > start && is_word (j - 1) <> is_word j in
+  List.find_opt bounded
+    ((if hex_end > int_end + 1 then [ hex_end ] else []) @ [ exponent_end; fraction_end; int_end ])
+
+let yaml_literals = [ "true"; "false"; "yes"; "no"; "null" ]
+
 let highlight_yaml_line (line : string) : string =
   let len = String.length line in
-  let trimmed = String.trim line in
-  if String.starts_with ~prefix:"#" trimmed then
-    "<span class=\"hljs-comment\">" ^ escape_code_text line ^ "</span>"
-  else
-    match String.index_opt line ':' with
-    | Some colon_idx when colon_idx > 0 ->
-        let key_part = String.sub line 0 (colon_idx + 1) in
-        let val_part = String.sub line (colon_idx + 1) (len - colon_idx - 1) in
-        let trimmed_val = String.trim val_part in
-        let rendered_val =
-          if trimmed_val = "" then escape_code_text val_part
-          else if trimmed_val = "true" || trimmed_val = "false" || trimmed_val = "null" then
-            " <span class=\"hljs-literal\">" ^ escape_code_text trimmed_val ^ "</span>"
-          else
-            " <span class=\"hljs-string\">" ^ escape_code_text trimmed_val ^ "</span>"
-        in
-        "<span class=\"hljs-attr\">" ^ escape_code_text key_part ^ "</span>" ^ rendered_val
-    | _ -> escape_code_text line
+  let buf = Buffer.create (len + 64) in
+  let plain i j = Buffer.add_string buf (escape_code_text (String.sub line i (j - i))) in
+  let token cls i j = Buffer.add_string buf (token_span cls (String.sub line i (j - i))) in
+  let is_flow_mark = function ',' | '[' | ']' | '{' | '}' -> true | _ -> false in
+  (* [depth] counts the flow collections open at [i]. *)
+  let rec loop i depth =
+    if i < len then begin
+      let c = line.[i] in
+      let ends_scalar j = j = len || is_blank line.[j] || is_flow_mark line.[j] in
+      let literal_end () =
+        List.find_map
+          (fun word ->
+            let j = i + String.length word in
+            if j <= len && String.lowercase_ascii (String.sub line i (j - i)) = word && ends_scalar j
+            then Some j
+            else None)
+          yaml_literals
+      in
+      let key_end = if c = '"' || c = '\'' then yaml_quoted_key_end line i else yaml_key_end line i in
+      let next cls j = token cls i j; loop j depth in
+      if is_blank c then begin plain i (i + 1); loop (i + 1) depth end
+      else match key_end with
+        | Some j -> next "attr" j
+        | None ->
+            if c = '-' && (i + 1 = len || line.[i + 1] = ' ') then next "bullet" (i + 1)
+            else if c = '#' then token "comment" i len
+            else match literal_end () with
+              | Some j -> next "literal" j
+              | None ->
+                  match yaml_number_end line i with
+                  | Some j -> next "number" j
+                  | None ->
+                      if c = '[' || c = '{' then begin plain i (i + 1); loop (i + 1) (depth + 1) end
+                      else if depth > 0 && c = ',' then begin plain i (i + 1); loop (i + 1) depth end
+                      else if depth > 0 && (c = ']' || c = '}') then begin
+                        plain i (i + 1); loop (i + 1) (depth - 1) end
+                      else if c = '"' || c = '\'' then next "string" (yaml_quoted_end line i)
+                      else
+                        let rec scalar_end j =
+                          if j < len && not (is_blank line.[j]) && not (depth > 0 && is_flow_mark line.[j])
+                          then scalar_end (j + 1)
+                          else j
+                        in
+                        next "string" (scalar_end (i + 1))
+    end
+  in
+  if len >= 3 && String.sub line 0 3 = "---" && String.trim line = "---" then begin
+    token "meta" 0 3; plain 3 len end
+  else loop 0 0;
+  Buffer.contents buf
 
 let highlight_code_line (lang : string) (line : string) : string =
   let norm_lang = String.lowercase_ascii lang in
@@ -425,20 +562,27 @@ let highlight_code_line (lang : string) (line : string) : string =
   else
     let len = String.length line in
     let buf = Buffer.create (len + 32) in
+    let shell = is_shell_lang norm_lang in
+    let python = norm_lang = "py" || norm_lang = "python" in
+    (* A shell word runs through dots and slashes, so "local" in a host name
+       or a path is not the keyword. *)
+    let is_word_cont c = is_ident_cont c || (shell && (c = '.' || c = '/')) in
     let rec loop i =
       if i >= len then Buffer.contents buf
       else
         let c = line.[i] in
-        if c = '#' && (norm_lang = "sh" || norm_lang = "bash" || norm_lang = "shell" || norm_lang = "zsh" || norm_lang = "py" || norm_lang = "python") then begin
-          Buffer.add_string buf "<span class=\"hljs-comment\">";
-          Buffer.add_string buf (escape_code_text (String.sub line i (len - i)));
-          Buffer.add_string buf "</span>";
-          Buffer.contents buf
-        end
-        else if c = '/' && i + 1 < len && line.[i + 1] = '/' then begin
-          Buffer.add_string buf "<span class=\"hljs-comment\">";
-          Buffer.add_string buf (escape_code_text (String.sub line i (len - i)));
-          Buffer.add_string buf "</span>";
+        (* A shell comment starts a word; elsewhere "#" belongs to the word,
+           as in "$#". "//" is an operator in Python, part of a path in a
+           shell, and after a colon the start of a URL. *)
+        let hash_comment =
+          c = '#' && (python || (shell && (i = 0 || is_blank line.[i - 1])))
+        in
+        let slash_comment =
+          c = '/' && i + 1 < len && line.[i + 1] = '/'
+          && not (shell || python) && not (i > 0 && line.[i - 1] = ':')
+        in
+        if hash_comment || slash_comment then begin
+          Buffer.add_string buf (token_span "comment" (String.sub line i (len - i)));
           Buffer.contents buf
         end
         else if c = '"' || c = '\'' then
@@ -467,7 +611,16 @@ let highlight_code_line (lang : string) (line : string) : string =
           Buffer.add_string buf (escape_code_text str_token);
           Buffer.add_string buf "</span>";
           loop after_quote
-        else if is_digit c then
+        else if is_digit c && shell then begin
+          (* A shell reads digits as part of a word: a port, an address. *)
+          let rec find_word_end j =
+            if j < len && is_word_cont line.[j] then find_word_end (j + 1) else j
+          in
+          let word_end = find_word_end (i + 1) in
+          Buffer.add_string buf (escape_code_text (String.sub line i (word_end - i)));
+          loop word_end
+        end
+        else if is_digit c || (norm_lang = "json" && c = '-' && i + 1 < len && is_digit line.[i + 1]) then
           let rec find_num_end j =
             if j < len && (is_digit line.[j] || line.[j] = '.' || line.[j] = 'x' || line.[j] = 'X') then
               find_num_end (j + 1)
@@ -481,13 +634,20 @@ let highlight_code_line (lang : string) (line : string) : string =
           loop num_end
         else if is_ident_start c then begin
           let rec find_id_end j =
-            if j < len && is_ident_cont line.[j] then find_id_end (j + 1) else j
+            if j < len && is_word_cont line.[j] then find_id_end (j + 1) else j
           in
           let id_end = find_id_end (i + 1) in
           let word = String.sub line i (id_end - i) in
           if is_keyword norm_lang word then begin
             Buffer.add_string buf "<span class=\"hljs-keyword\">";
             Buffer.add_string buf (escape_code_text word);
+            Buffer.add_string buf "</span>"
+          end
+          else if norm_lang = "json" && List.mem word [ "true"; "false"; "null" ] then begin
+            (* highlight.js nests a keyword in a JSON literal, so themes give
+               it the keyword color. *)
+            Buffer.add_string buf "<span class=\"hljs-literal\">";
+            Buffer.add_string buf (token_span "keyword" word);
             Buffer.add_string buf "</span>"
           end
           else if is_literal word then begin

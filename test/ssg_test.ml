@@ -291,6 +291,74 @@ let test_markdown_rendering () =
   assert_not_contains hostile_fence "<img" "2.6 language label escaped";
   assert_not_contains hostile_fence "<script>" "2.6 code text escaped";
 
+  (* 2.6.1 a shell reads URLs, paths, numbers and dotted names as words, and
+     opens a comment with "#" only where a word starts *)
+  let code lang lines =
+    render_html ("```" ^ lang ^ "\n" ^ String.concat "\n" lines ^ "\n```")
+  in
+  let token cls text = "<span class=\"hljs-" ^ cls ^ "\">" ^ text ^ "</span>" in
+  let shell_code =
+    code "bash"
+      [ "curl http://10.0.0.1:80/a//b # note"; "echo $# x#y"; "cd /usr/local/bin";
+        "ping api.local"; "if true; then exit 1; fi" ]
+  in
+  List.iter
+    (fun (expected, message) ->
+      assert_contains shell_code (expected ^ "\n") ("2.6.1 " ^ message))
+    [
+      ("curl http://10.0.0.1:80/a//b " ^ token "comment" "# note", "shell URL and port stay plain");
+      (token "built_in" "echo" ^ " $# x#y", "shell # inside a word is not a comment");
+      (token "built_in" "cd" ^ " /usr/local/bin", "shell path holds no keyword");
+      ("ping api.local", "shell host name holds no keyword");
+      ( token "keyword" "if" ^ " " ^ token "literal" "true" ^ "; " ^ token "keyword" "then" ^ " "
+        ^ token "built_in" "exit" ^ " 1; " ^ token "keyword" "fi",
+        "shell keywords, literals and builtins" );
+    ];
+  assert_contains (code "python" [ "q = a // b  # floor" ])
+    ("q = a // b  " ^ token "comment" "# floor" ^ "\n")
+    "2.6.1 Python floor division is not a comment";
+  assert_contains (code "js" [ "x // note" ]) ("x " ^ token "comment" "// note" ^ "\n")
+    "2.6.1 line comment kept";
+  assert_contains (code "nginx" [ "proxy_pass http://backend;" ]) "proxy_pass http://backend;\n"
+    "2.6.1 URL outside a string is not a comment";
+
+  (* 2.6.2 YAML tokens: document marker, comment, bullet, key, literal, number, scalar *)
+  let yaml_code =
+    code "yaml"
+      [ "---"; "# note"; "ports:"; "  - name: http"; "    port: 80"; "clusterIP: 10.96.30.100";
+        "image: nginx:1.27"; "ready: true # yes"; "no-cache: \"a # b\""; "tags: [a, 2, false]";
+        "- Ingress"; "\"a key\": v"; "- http://example.com"; "이름: 값" ]
+  in
+  let attr = token "attr" and str = token "string" and num = token "number" in
+  let bullet = token "bullet" "-" in
+  List.iter
+    (fun (expected, message) ->
+      assert_contains yaml_code (expected ^ "\n") ("2.6.2 " ^ message))
+    [
+      (token "meta" "---", "document marker");
+      (token "comment" "# note", "comment");
+      (attr "ports:", "key without a value");
+      ("  " ^ bullet ^ " " ^ attr "name:" ^ " " ^ str "http", "key in a list item");
+      ("    " ^ attr "port:" ^ " " ^ num "80", "number");
+      (attr "clusterIP:" ^ " " ^ num "10.96" ^ num ".30" ^ num ".100", "dotted address");
+      (attr "image:" ^ " " ^ str "nginx:1.27", "colon inside a scalar");
+      (attr "ready:" ^ " " ^ token "literal" "true" ^ " " ^ token "comment" "# yes",
+       "literal and trailing comment");
+      (attr "no-cache:" ^ " " ^ str "\"a # b\"", "key that starts with a literal word, # in quotes");
+      (attr "tags:" ^ " [" ^ str "a" ^ ", " ^ num "2" ^ ", " ^ token "literal" "false" ^ "]",
+       "flow sequence");
+      (bullet ^ " " ^ str "Ingress", "scalar in a list");
+      (attr "\"a key\":" ^ " " ^ str "v", "quoted key");
+      (bullet ^ " " ^ str "http://example.com", "URL in a list is not a key");
+      (attr "이름:" ^ " " ^ str "값", "non-ASCII key");
+    ];
+
+  (* 2.6.3 JSON literals take the keyword color, and a number keeps its sign *)
+  assert_contains (code "json" [ "{\"ok\": false, \"n\": -1}" ])
+    ("{" ^ attr "\"ok\"" ^ ": " ^ token "literal" (token "keyword" "false") ^ ", " ^ attr "\"n\""
+     ^ ": " ^ num "-1" ^ "}\n")
+    "2.6.3 JSON literal and negative number";
+
   (* 2.7 footnotes retain target links and plain-text hover content inside callouts *)
   let html_fn =
     render_html

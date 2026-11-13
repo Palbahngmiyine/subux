@@ -17,6 +17,13 @@ type rendered_markdown = {
     normalization; code outside tables preserves it.
     All source text and language names remain HTML-escaped.
 
+    Code in a fence carries highlight.js token classes ([hljs-*]). YAML marks
+    document markers, comments, list bullets, keys, literals, numbers and
+    scalars. A shell reads URLs, paths, numbers and dotted names as plain words
+    and opens a comment with [#] only where a word starts. In other languages
+    [//] opens a comment unless it follows a colon, and never in Python. A JSON
+    literal nests a keyword token, so a theme colors it as highlight.js does.
+
     Without [heading_base], preserve the source heading levels. Site templates
     use [heading_base:2] beneath their own page title, which also normalizes
     forward level jumps. [page_title] removes only a matching leading H1 that
