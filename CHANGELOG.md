@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/Palbahngmiyine/subux/compare/v0.2.0...v0.3.0) (2026-11-13)
+
+
+### Features
+
+* themeColor·fontDisplay·lazyImages·trailingSlash 설정 추가 ([fab125c](https://github.com/Palbahngmiyine/subux/commit/fab125c26694b06720a661d95ac7e47c4f1bf3ff))
+* 릴리스에 npm 형식 패키지(subux-&lt;version&gt;.tgz) 추가 ([91bd3fc](https://github.com/Palbahngmiyine/subux/commit/91bd3fc88edd5ed7b68b8e879ab93f8c6b55aa28))
+* 사이트 설정 4종과 npm 형식 릴리스 패키지 추가, 코드 강조 보완 ([5fbec86](https://github.com/Palbahngmiyine/subux/commit/5fbec86faf35dbda1b51e09d0fbc4902a1c7f05f))
+* 실행 파일 옆의 design/tokens.json을 기본 토큰으로 사용 ([ef58c48](https://github.com/Palbahngmiyine/subux/commit/ef58c48096bd30cc480f425d331e9b6dd55bdb8d))
+
+
+### Bug Fixes
+
+* JSON 코드 강조가 구두점을 highlight.js처럼 토큰으로 감싸게 함 ([e8d2440](https://github.com/Palbahngmiyine/subux/commit/e8d244097f366396ecd9813308545cfc81878a75))
+* 리뷰에서 나온 토크나이저·토큰 탐색·게시 검증 문제를 보완 ([8f2902b](https://github.com/Palbahngmiyine/subux/commit/8f2902b241dcde008107e4b960794bfbd04a62e5))
+* 코드 강조가 셸 URL을 주석으로 칠하지 않게 하고 YAML·JSON 토큰을 보완 ([b240f58](https://github.com/Palbahngmiyine/subux/commit/b240f58a43dc9c85bc90ecd7898bbebfba31be4a))
+
 ## [0.2.0](https://github.com/Palbahngmiyine/subux/compare/v0.1.0...v0.2.0) (2026-11-10)
 
 
