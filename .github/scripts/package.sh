@@ -22,6 +22,8 @@ esac
 
 mkdir -p "$1"
 output=$(cd "$1" && pwd)
+# macOS tar would otherwise store extended attributes as "._" files.
+export COPYFILE_DISABLE=1
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 name="subux-${version}-${platform}"

@@ -26,8 +26,9 @@ type build_plan = {
   artifacts : output_artifact list;
 }
 
+(** Images are deferred unless [lazy_images] is false; see [Markdown.render]. *)
 val parse_source_file :
-  source_file -> (parsed_entry, Domain.build_error) result
+  ?lazy_images:bool -> source_file -> (parsed_entry, Domain.build_error) result
 
 val sort_entries : parsed_entry list -> parsed_entry list
 

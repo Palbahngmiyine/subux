@@ -2,7 +2,9 @@
 
 The [CI workflow](../.github/workflows/ci.yml) builds, tests, checks content,
 and smoke tests an extracted distribution on every PR and push to `main`,
-including documentation changes. It uses OCaml 5.3.0 and Dune 3.17.2 on:
+including documentation changes. It then assembles the npm-format package from
+the four tested archives and runs it as installed. It uses OCaml 5.3.0 and Dune
+3.17.2 on:
 
 | Package | GitHub runner |
 | --- | --- |
@@ -40,17 +42,22 @@ checks if merges must wait for CI.
    The [Release workflow](../.github/workflows/release.yml) validates the draft's
    exact commit on all four targets. A failed check leaves the release as a draft.
 4. After checking the tag commit, archive checksums, embedded commit/version,
-   and complete asset list, it uploads four archives plus `SHA256SUMS` and
-   publishes the draft.
+   and complete asset list, it uploads four archives, the npm-format package
+   and `SHA256SUMS`, and publishes the draft.
    Publication stays in this workflow because token-created tags do not trigger
    another push workflow.
 
 Each archive includes `subux`, `design/tokens.json`, both project and cmarkit
 licenses, `version.txt`, `README.md`, and a `BUILD-INFO` commit/platform record.
-Extract it and run `./subux` from that directory, or pass an explicit
-`--tokens /path/to/design/tokens.json` when running elsewhere. OCaml and Dune
-are only needed to build from source. Linux packages require glibc 2.35 or newer;
-macOS packages target macOS 15. These are native builds, not cross-compilations.
+Extract it and run its `subux` from any directory. Without `--tokens`, Subux
+reads `design/tokens.json` from the input directory, then from the working
+directory, then from beside the executable. OCaml and Dune are only needed
+to build from source. Linux packages require glibc 2.35 or newer; macOS packages
+target macOS 15. These are native builds, not cross-compilations.
+
+`subux-<version>.tgz` is an npm-format package for sites that install Subux
+with a Node package manager. Its `platforms/` directory holds the four archives
+as tested, and its `subux` command runs the one for the current platform.
 
 ## Recovery
 

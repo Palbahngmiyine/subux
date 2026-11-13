@@ -1,0 +1,17 @@
+{
+  "name": "subux",
+  "version": "0.0.0",
+  "description": "Static site generator that builds a Markdown workspace from one native executable",
+  "license": "MIT",
+  "homepage": "https://github.com/Palbahngmiyine/subux#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Palbahngmiyine/subux.git"
+  },
+  "bin": {
+    "subux": "bin/subux.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

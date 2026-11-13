@@ -49,7 +49,8 @@ let fallback_title_of_slug (slug : Slug.t) : string =
     | last :: _ when last <> "" -> last
     | _ -> s
 
-let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
+let parse_source_file ?(lazy_images = true) (src : source_file) :
+    (parsed_entry, build_error) result =
   let open Result_syntax in
   let* doc =
     Frontmatter.parse ~file:src.rel_path src.raw_markdown
@@ -69,7 +70,7 @@ let parse_source_file (src : source_file) : (parsed_entry, build_error) result =
             end
         end
   in
-  let rendered = Markdown.render ~heading_base:2 ~page_title:title doc.body in
+  let rendered = Markdown.render ~heading_base:2 ~page_title:title ~lazy_images doc.body in
   Ok
     {
       collection = src.collection;
@@ -185,6 +186,13 @@ let base_url (config : site_config) =
     String.sub config.base_url 0 (String.length config.base_url - 1)
   else config.base_url
 
+(* A page's own address. A host that serves [dir/index.html] at [/dir/] names
+   it with a trailing slash. *)
+let page_address (config : site_config) (slug : Slug.t) : string =
+  let href = Slug.to_href slug in
+  if config.trailing_slash && not (String.ends_with ~suffix:"/" href) then href ^ "/"
+  else href
+
 let safe_href href =
   Option.value ~default:"#" (Safe_url.sanitize_url ~allow_contact:true ~decode_entities:false href)
 
@@ -196,6 +204,9 @@ let escape_raw_text escape text =
 
 let skip_link = Html.el "a" ~attrs:[("href", "#main-content"); ("class", "skip-link")]
   [Html.txt "본문으로 건너뛰기"]
+
+let web_font_stylesheet =
+  "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
 
 let common_head ~stylesheet ~(page_title : string) ~(description : string)
     ~(canonical_path : string) ~(config : site_config) : Html.node list =
@@ -226,8 +237,13 @@ let common_head ~stylesheet ~(page_title : string) ~(description : string)
     Html.void "meta"
       ~attrs:[ ("name", "description"); ("content", description) ]
       ();
-    Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: light)"); ("content", "#fafafa")] ();
-    Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: dark)"); ("content", "#171717")] ();
+    (match config.theme_color with
+     | Some color ->
+         Html.void "meta" ~attrs:[("name", "theme-color"); ("content", (color :> string))] ()
+     | None -> Html.frag [
+         Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: light)"); ("content", "#fafafa")] ();
+         Html.void "meta" ~attrs:[("name", "theme-color"); ("media", "(prefers-color-scheme: dark)"); ("content", "#171717")] ();
+       ]);
     Html.void "meta" ~attrs:[("property", "og:title"); ("content", page_title)] ();
     Html.void "meta" ~attrs:[("property", "og:description"); ("content", description)] ();
     Html.void "meta" ~attrs:[("property", "og:url"); ("content", safe_href canonical_url)] ();
@@ -246,12 +262,17 @@ let common_head ~stylesheet ~(page_title : string) ~(description : string)
      | css -> Html.void "link" ~attrs:[("rel", "stylesheet");
          ("href", match css with Some c -> css_asset c | None -> "/assets/subux-theme.css")] ());
     Html.void "link" ~attrs:[("rel", "preconnect"); ("href", "https://cdn.jsdelivr.net"); ("crossorigin", "anonymous")] ();
-    Html.void "link" ~attrs:[("rel", "preload"); ("as", "style"); ("crossorigin", "anonymous");
-      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ();
-    Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous"); ("media", "print"); ("onload", "try{for(const r of this.sheet.cssRules)if(r.type===5)r.style.fontDisplay='optional'}catch{}this.media='all'");
-      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ();
-    Html.el "noscript" [Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous");
-      ("href", "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css")] ()];
+    (match config.font_display with
+     | Font_swap ->
+         Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous"); ("href", web_font_stylesheet)] ()
+     | Font_optional -> Html.frag [
+         Html.void "link" ~attrs:[("rel", "preload"); ("as", "style"); ("crossorigin", "anonymous");
+           ("href", web_font_stylesheet)] ();
+         Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous"); ("media", "print"); ("onload", "try{for(const r of this.sheet.cssRules)if(r.type===5)r.style.fontDisplay='optional'}catch{}this.media='all'");
+           ("href", web_font_stylesheet)] ();
+         Html.el "noscript" [Html.void "link" ~attrs:[("rel", "stylesheet"); ("crossorigin", "anonymous");
+           ("href", web_font_stylesheet)] ()];
+       ]);
   ] @ (match config.custom_css with
       | None -> []
       | Some _ -> [ Html.void "link"
@@ -822,14 +843,14 @@ let render_blog_article ?stylesheet ~(config : site_config)
   in
   let head =
     common_head ~stylesheet ~page_title:entry.title ~description:desc
-      ~canonical_path:(Slug.to_href entry.slug)
+      ~canonical_path:(page_address config entry.slug)
       ~config
   in
   let schema = Json_parser.Object ([
     ("@context", Json_parser.String "https://schema.org");
     ("@type", Json_parser.String "BlogPosting");
     ("headline", Json_parser.String entry.title);
-    ("url", Json_parser.String (safe_href (base_url config ^ Slug.to_href entry.slug))) ] @
+    ("url", Json_parser.String (safe_href (base_url config ^ page_address config entry.slug))) ] @
     (match entry.meta.date with None -> [] | Some d -> [("datePublished", Json_parser.String (format_iso d))])) in
   let head = head @ [Html.el "script" ~attrs:[("type", "application/ld+json")]
     [Html.raw (escape_raw_text "\\u003c" (Json_parser.to_string schema))]] in
@@ -1176,7 +1197,7 @@ let render_docs_page ?stylesheet ~(config : site_config)
   let page_title = entry.title ^ " | " ^ config.title in
   let head =
     common_head ~stylesheet ~page_title ~description:config.description
-      ~canonical_path:current_href ~config
+      ~canonical_path:(page_address config entry.slug) ~config
   in
   let scripts =
     if entry.rendered.has_mermaid then
@@ -1267,7 +1288,7 @@ let build_sitemap_xml (config : site_config) (entries : parsed_entry list) :
   List.iter
     (fun (e : parsed_entry) ->
       if (not e.meta.draft) && Slug.to_string e.slug <> "" then begin
-        let loc = base ^ Slug.to_href e.slug in
+        let loc = base ^ page_address config e.slug in
         Buffer.add_string buf
           ("  <url><loc>" ^ Html.escape_text loc ^ "</loc></url>\n")
       end)
@@ -1286,7 +1307,7 @@ let compile_site ~(config : site_config) ~(tokens_json : string)
   let* css_bundle =
     Token_compiler.compile_full_stylesheet ~area_tone:config.area_tone tokens_json
   in
-  let* entries = map_list parse_source_file sources in
+  let* entries = map_list (parse_source_file ~lazy_images:config.lazy_images) sources in
   let published = List.filter (fun (e : parsed_entry) -> not e.meta.draft) entries in
   let page_artifacts =
     match config.mode with
